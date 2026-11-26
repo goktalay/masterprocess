@@ -42,52 +42,11 @@ jobs:
           path: ProcessExplorer/bin/Release/net8.0-windows/
           retention-days: 30
 
-      - name: Create installer
-        continue-on-error: true
+      - name: List output
         run: |
-          $ISCCPaths = @(
-            "C:\Program Files\Inno Setup 7\ISCC.exe",
-            "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
-            "C:\Program Files\Inno Setup 6\ISCC.exe",
-            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          )
-          $ISCC = $ISCCPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($ISCC) {
-            & $ISCC "setup.iss"
-            Write-Host "✓ Installer created"
-          } else {
-            Write-Host "⚠ InnoSetup not found, skipping installer"
-          }
-
-      - name: Upload to mastertool.download
-        if: secrets.PROCESSEXPLORER_RELEASE_KEY != ''
-        env:
-          RELEASE_KEY: ${{ secrets.PROCESSEXPLORER_RELEASE_KEY }}
-          MASTERTOOL_URL: https://mastertool.download
-        shell: pwsh
-        run: |
-          $exe = Get-Item "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe"
-          Write-Host "Uploading ProcessExplorer.exe..." -ForegroundColor Green
-          Write-Host "File: $($exe.FullName)" -ForegroundColor Cyan
-          Write-Host "Size: $([math]::Round($exe.Length/1MB, 2)) MB" -ForegroundColor Cyan
-
-          try {
-            $uri = "$env:MASTERTOOL_URL/api/pe/releases/upload"
-            $headers = @{
-              "X-Release-Key" = $env:RELEASE_KEY
+          Write-Host "=== Build Output ===" -ForegroundColor Green
+          if (Test-Path "ProcessExplorer\bin\Release\net8.0-windows\") {
+            Get-ChildItem "ProcessExplorer\bin\Release\net8.0-windows\" -File | ForEach-Object {
+              Write-Host "$($_.Name) - $([math]::Round($_.Length/1MB, 2)) MB"
             }
-
-            $response = Invoke-WebRequest -Uri $uri `
-              -Method POST `
-              -Headers $headers `
-              -Form @{file = $exe} `
-              -ErrorAction Stop
-
-            Write-Host "✓ Upload successful!" -ForegroundColor Green
-            Write-Host "Response: $($response.StatusCode)" -ForegroundColor Green
-          }
-          catch {
-            Write-Host "✗ Upload failed!" -ForegroundColor Red
-            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-            exit 1
           }
