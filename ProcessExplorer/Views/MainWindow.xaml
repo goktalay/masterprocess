@@ -70,6 +70,7 @@
                       CanUserDeleteRows="False"
                       IsReadOnly="True"
                       SelectionMode="Single"
+                      HeadersVisibility="Column"
                       Background="#3B4252"
                       Foreground="White"
                       BorderBrush="#434C5E"
