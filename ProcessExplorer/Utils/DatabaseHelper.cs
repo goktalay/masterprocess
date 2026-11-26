@@ -7,7 +7,14 @@ public static class DatabaseHelper
 {
     private static readonly string DbPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Masterprocess", "ProcessExplorer.db");
+        "Master Process", "history.db");
+
+    private static bool _enabled = true;
+
+    public static void Disable()
+    {
+        _enabled = false;
+    }
 
     public static void Initialize()
     {
@@ -56,6 +63,8 @@ public static class DatabaseHelper
     public static void SaveProcessMetrics(int processId, string processName,
         double cpuUsage, long memory, double gpuUsage, long gpuMemory)
     {
+        if (!_enabled) return;
+
         using var connection = new SQLiteConnection(GetConnectionString());
         connection.Open();
 
@@ -80,6 +89,8 @@ public static class DatabaseHelper
     public static List<(DateTime, double)> GetProcessCpuHistory(int processId, int lastMinutes = 60)
     {
         var history = new List<(DateTime, double)>();
+        if (!_enabled) return history;
+
         using var connection = new SQLiteConnection(GetConnectionString());
         connection.Open();
 

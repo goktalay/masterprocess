@@ -1,0 +1,108 @@
+name: Master Process release
+
+# v* etiketi: derle + sına + GitHub Release + mastertool.download'a yükle.
+# Elle çalıştırma (workflow_dispatch): yalnız derleme ve sınama; yükleme yapılmaz, paketler artifact olarak kalır.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props); fi
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Geçersiz sürüm: $V"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Sürüm: $V"
+
+      # x64, .NET çalışma zamanı pakette (kurulu .NET gerekmez). Windows ARM64'te x64 öykünmesiyle çalışır.
+      - name: Publish (setup files)
+        run: dotnet publish ProcessExplorer/ProcessExplorer.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -p:DebugType=none -o publish/setup
+
+      - name: Publish (portable, single file)
+        run: dotnet publish ProcessExplorer/ProcessExplorer.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -p:DebugType=none -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish/portable
+
+      # Master Tool yüklü uygulamayı "Master Process.exe" adıyla arar; apphost yeniden adlandırılabilir
+      - name: Rename executables
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          Rename-Item 'publish/setup/MasterProcess.exe' 'Master Process.exe'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item 'publish/portable/MasterProcess.exe' "dist/Master-Process-Portable-$v.exe"
+          Get-ChildItem publish/setup | Measure-Object Length -Sum | ForEach-Object { "setup files: $($_.Count), $([math]::Round($_.Sum / 1MB, 1)) MB" }
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist/*.exe | ForEach-Object { "$($_.Name)  $([math]::Round($_.Length / 1MB, 1)) MB" }
+
+      - name: Screen size for screenshots
+        continue-on-error: true
+        shell: powershell
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+
+      # Kurulumu sessizce kur, Master Tool'un aradığı kaydı ve dosyayı doğrula, kurulu uygulamayı çalıştır
+      - name: Test installer and installed app
+        shell: powershell
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $setup = Start-Process -FilePath "dist\Master-Process-Setup-$v.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER' -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw "Installer exit code $($setup.ExitCode)" }
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -like 'Master Process*' } | Select-Object -First 1
+          if ($null -eq $entry) { throw 'Uninstall entry "Master Process" not found.' }
+          "DisplayName=$($entry.DisplayName) DisplayVersion=$($entry.DisplayVersion) InstallLocation=$($entry.InstallLocation)"
+          if ($entry.DisplayVersion -ne $v) { throw "DisplayVersion is $($entry.DisplayVersion), expected $v" }
+          $exe = Join-Path $entry.InstallLocation 'Master Process.exe'
+          if (-not (Test-Path $exe)) { throw "Missing: $exe" }
+          .\scripts\ci-smoke.ps1 -Exe $exe -Shot "shots\master-process.png" -ExpectDb
+
+      - name: Test portable
+        shell: powershell
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          .\scripts\ci-smoke.ps1 -Exe "dist\Master-Process-Portable-$v.exe" -ExpectDb
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: master-process-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.exe
+            shots/*.png
+          retention-days: 30
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Master Process ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: dist/*.exe
+
+      - name: Upload to mastertool.download
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          MASTERPROCESS_RELEASE_KEY: ${{ secrets.MASTERPROCESS_RELEASE_KEY || secrets.MP_RELEASE_KEY }}
+        run: |
+          V='${{ steps.ver.outputs.version }}'
+          scripts/upload-mastertool.sh "$V" "dist/Master-Process-Setup-$V.exe" "Master Process $V" "dist/Master-Process-Portable-$V.exe"

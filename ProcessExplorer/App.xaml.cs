@@ -13,7 +13,14 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // Initialize database on startup
-        DatabaseHelper.Initialize();
+        // Initialize database on startup; without it the app still runs, only history is not recorded
+        try
+        {
+            DatabaseHelper.Initialize();
+        }
+        catch
+        {
+            DatabaseHelper.Disable();
+        }
     }
 }

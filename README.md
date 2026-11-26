@@ -1,6 +1,8 @@
-# Process Explorer - Masterprocess
+# Master Process
 
-Gelişmiş Windows sistem izleme ve process yönetim aracı. Windows Task Manager'ın uzantısı gibi çalışan, performans analizi, tarihçe tracking ve detaylı sistem metriklerini sunan desktop uygulaması.
+Windows için süreç izleme aracı: çalışan süreçleri bellek, CPU ve iş parçacığı değerleriyle listeler, seçilen sürecin ayrıntılarını gösterir. Mastertool ailesinin bir aracıdır; tanıtım ve indirme: <https://mastertool.download/araclar/master-process>
+
+> Ad notu: proje "Process Explorer" çalışma adıyla başladı (kod ad alanı ve klasör adları hâlâ `ProcessExplorer`). Bu ad Microsoft Sysinternals'ın bir ürününe ait olduğu için yayın adı **Master Process**'tir.
 
 ## 🎯 Özellikler
 
@@ -8,8 +10,7 @@ Gelişmiş Windows sistem izleme ve process yönetim aracı. Windows Task Manage
 - ✅ WPF tabanlı modern UI
 - ✅ Gerçek zamanlı process listesi
 - ✅ CPU ve Memory kullanımı gösterimi
-- ✅ Process ağacı yapısı
-- ✅ SQLite tarihçe database
+- ✅ SQLite tarihçe database (izleme sırasında seçili sürecin ölçümleri; arayüzde henüz gösterilmiyor)
 - ✅ MVVM mimari
 
 ### Faza 1: Temel Monitoring (Planlı)
@@ -100,7 +101,7 @@ dotnet run --project ProcessExplorer/ProcessExplorer.csproj
 dotnet build -c Release
 
 # Çalıştır
-./ProcessExplorer/bin/Release/net8.0-windows/ProcessExplorer.exe
+./ProcessExplorer/bin/Release/net8.0-windows/MasterProcess.exe
 ```
 
 ## 💻 Kullanım
@@ -125,7 +126,7 @@ dotnet build -c Release
    - **Refresh**: Manual yenileme
 
 ### Database
-- Konum: `%APPDATA%\Masterprocess\ProcessExplorer.db`
+- Konum: `%APPDATA%\Master Process\history.db`
 - Şema: ProcessHistory tablosu (ProcessId, Timestamp, CPU, Memory, GPU, Disk I/O)
 - Tarihçe: Son 60 günü tutabilir
 
@@ -133,7 +134,7 @@ dotnet build -c Release
 
 ### Dependencies
 - **OxyPlot.Wpf**: Real-time grafikleri için
-- **System.Data.SQLite**: Tarihçe database
+- **System.Data.SQLite.Core**: Tarihçe database
 - **CommunityToolkit.Mvvm**: MVVM binding utilities
 
 ### Yapı Mimarisi
@@ -173,7 +174,7 @@ MainViewModel
    ↓
 3. ProcessService (GetAllProcesses)
    ↓
-4. Performance Counters (Kernel API)
+4. System.Diagnostics.Process + GetSystemTimes (CPU: iki örnek arası işlemci süresi farkı)
    ↓
 5. Models (ProcessInfo objects)
    ↓
@@ -182,7 +183,35 @@ MainViewModel
 7. Database Save (Tarihçe)
 ```
 
+## 📦 Yayın (mastertool.download)
+
+Paketleri `.github/workflows/release.yml` üretir (Windows runner):
+
+- **Kurulum**: `Master-Process-Setup-<sürüm>.exe` — Inno Setup (`setup.iss`), x64, .NET çalışma zamanı pakette. Varsayılan konum `…\Mastertool\Master Process`; kaldırma kaydı adı "Master Process", çalıştırılabilir dosya `Master Process.exe` (Master Tool yüklü uygulamayı bu ikisiyle bulur).
+- **Portable**: `Master-Process-Portable-<sürüm>.exe` — tek dosya, kurulum gerektirmez.
+- Akış her iki paketi de runner'da çalıştırıp sınar (`scripts/ci-smoke.ps1`: pencere açılıyor mu, izleme başlıyor mu, liste doluyor mu, geçmiş veritabanı oluşuyor mu) ve bir ekran görüntüsü kaydeder.
+
+Sürüm çıkarmak:
+
+```bash
+# Directory.Build.props içindeki <Version> değerini güncelle, commit et, sonra:
+git tag v1.0.1 && git push origin v1.0.1
+```
+
+Etiketle çalışan akış GitHub Release oluşturur ve `scripts/upload-mastertool.sh` ile paketleri
+`POST https://mastertool.download/api/mp/releases/<sürüm>/setup|portable` uçlarına yükler (başlık `X-Release-Key`).
+Anahtar depo secret'ı `MASTERPROCESS_RELEASE_KEY`'den okunur; tanımlı değilse yükleme adımı uyarı verip atlanır.
+Elle çalıştırma (Actions → Run workflow) yalnız derler ve sınar, yükleme yapmaz.
+
+Depodaki `BUILD_AND_DEPLOY.md`, `DEPLOYMENT.md`, `MASTERTOOL_*.md`, `deploy-to-master-download.ps1`, `setup-mastertool.ps1` ve
+`hepgo-pe-integration.patch` eski denemelere aittir (`/api/pe/...` uçları yoktur); geçerli süreç bu bölümdür.
+
 ## 🐛 Bilinen Sınırlamalar
+
+- Arayüz İngilizce ve tek (koyu) temalı
+- Süreç sonlandırma / öncelik değiştirme yok
+- Korumalı sistem süreçlerinde dosya yolu, başlangıç zamanı ve CPU değeri boş kalabilir
+- Paket x64'tür; Windows ARM64'te öykünmeyle çalışır
 
 - GPU monitoring henüz implement edilmemiş
 - Window capture özelliği planlı
@@ -208,7 +237,7 @@ Katkılar hoş karşılanır! PR'lar için:
 
 ## 📄 Lisans
 
-Masterprocess - Process Explorer © 2026
+Master Process © 2026 Mastertool
 
 ## 📞 Destek
 

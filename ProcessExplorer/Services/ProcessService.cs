@@ -6,9 +6,8 @@ namespace ProcessExplorer.Services;
 
 public class ProcessService
 {
-    private readonly Dictionary<int, PerformanceCounter> _cpuCounters = new();
+    private readonly Dictionary<int, (TimeSpan Cpu, DateTime At)> _cpuSamples = new();
     private readonly Dictionary<int, ProcessInfo> _processCache = new();
-    private DateTime _lastUpdateTime = DateTime.UtcNow;
 
     public List<ProcessInfo> GetAllProcesses()
     {
@@ -19,32 +18,71 @@ public class ProcessService
         {
             try
             {
-                var processInfo = new ProcessInfo
-                {
-                    ProcessId = process.Id,
-                    Name = process.ProcessName,
-                    Path = process.MainModule?.FileName,
-                    StartTime = process.StartTime,
-                    WorkingSetMemory = process.WorkingSet64,
-                    VirtualMemory = process.VirtualMemorySize64,
-                    PagedMemory = process.PagedMemorySize64,
-                    ThreadCount = process.Threads.Count,
-                    MainWindowHandle = process.MainWindowHandle,
-                    CpuUsagePercent = GetCpuUsage(process.Id),
-                    LastUpdated = DateTime.Now,
-                    WindowTitle = GetWindowTitle(process),
-                };
-
-                processes.Add(processInfo);
-                _processCache[process.Id] = processInfo;
+                processes.Add(ReadProcess(process));
             }
             catch
             {
-                // Skip processes we don't have permission to access
+                // Process exited while it was being read
+            }
+            finally
+            {
+                process.Dispose();
             }
         }
 
+        // Forget processes that are gone
+        var alive = processes.Select(p => p.ProcessId).ToHashSet();
+        foreach (var id in _processCache.Keys.Where(id => !alive.Contains(id)).ToList())
+        {
+            _processCache.Remove(id);
+            _cpuSamples.Remove(id);
+        }
+
         return processes.OrderBy(p => p.Name).ToList();
+    }
+
+    private ProcessInfo ReadProcess(Process process)
+    {
+        var name = process.ProcessName;
+        _processCache.TryGetValue(process.Id, out var cached);
+        if (cached != null && cached.Name != name)
+        {
+            // The process id was reused by another program
+            cached = null;
+            _cpuSamples.Remove(process.Id);
+        }
+
+        var processInfo = new ProcessInfo
+        {
+            ProcessId = process.Id,
+            Name = name,
+            // Path and start time need more rights than the rest: protected processes stay listed without them
+            Path = cached != null ? cached.Path : TryGet(() => process.MainModule?.FileName),
+            StartTime = cached != null ? cached.StartTime : TryGet(() => (DateTime?)process.StartTime),
+            WorkingSetMemory = process.WorkingSet64,
+            VirtualMemory = process.VirtualMemorySize64,
+            PagedMemory = process.PagedMemorySize64,
+            ThreadCount = process.Threads.Count,
+            MainWindowHandle = process.MainWindowHandle,
+            CpuUsagePercent = GetCpuUsage(process),
+            LastUpdated = DateTime.Now,
+            WindowTitle = GetWindowTitle(process),
+        };
+
+        _processCache[process.Id] = processInfo;
+        return processInfo;
+    }
+
+    private static T? TryGet<T>(Func<T?> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch
+        {
+            return default;
+        }
     }
 
     public ProcessInfo? GetProcessInfo(int processId)
@@ -56,22 +94,8 @@ public class ProcessService
 
         try
         {
-            var process = Process.GetProcessById(processId);
-            return new ProcessInfo
-            {
-                ProcessId = process.Id,
-                Name = process.ProcessName,
-                Path = process.MainModule?.FileName,
-                StartTime = process.StartTime,
-                WorkingSetMemory = process.WorkingSet64,
-                VirtualMemory = process.VirtualMemorySize64,
-                PagedMemory = process.PagedMemorySize64,
-                ThreadCount = process.Threads.Count,
-                MainWindowHandle = process.MainWindowHandle,
-                CpuUsagePercent = GetCpuUsage(processId),
-                LastUpdated = DateTime.Now,
-                WindowTitle = GetWindowTitle(process),
-            };
+            using var process = Process.GetProcessById(processId);
+            return ReadProcess(process);
         }
         catch
         {
@@ -107,19 +131,26 @@ public class ProcessService
                           .ToList();
     }
 
-    private double GetCpuUsage(int processId)
+    // CPU share since the previous sample: processor time used / wall time elapsed / logical processors
+    private double GetCpuUsage(Process process)
     {
         try
         {
-            if (!_cpuCounters.TryGetValue(processId, out var counter))
+            var now = DateTime.UtcNow;
+            var cpu = process.TotalProcessorTime;
+            double usage = 0;
+
+            if (_cpuSamples.TryGetValue(process.Id, out var previous))
             {
-                counter = new PerformanceCounter("Process", "% Processor Time",
-                    Process.GetProcessById(processId).ProcessName, true);
-                _cpuCounters[processId] = counter;
+                var elapsed = (now - previous.At).TotalMilliseconds;
+                if (elapsed > 0)
+                {
+                    usage = (cpu - previous.Cpu).TotalMilliseconds / elapsed / Environment.ProcessorCount * 100.0;
+                }
             }
 
-            var value = counter.NextValue() / Environment.ProcessorCount;
-            return Math.Min(value, 100.0);
+            _cpuSamples[process.Id] = (cpu, now);
+            return Math.Clamp(usage, 0.0, 100.0);
         }
         catch
         {
