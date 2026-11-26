@@ -64,21 +64,30 @@ jobs:
         env:
           RELEASE_KEY: ${{ secrets.PROCESSEXPLORER_RELEASE_KEY }}
           MASTERTOOL_URL: https://mastertool.download
+        shell: pwsh
         run: |
           $exe = Get-Item "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe"
-          Write-Host "Uploading ProcessExplorer.exe to mastertool.download..." -ForegroundColor Green
+          Write-Host "Uploading ProcessExplorer.exe..." -ForegroundColor Green
+          Write-Host "File: $($exe.FullName)" -ForegroundColor Cyan
+          Write-Host "Size: $([math]::Round($exe.Length/1MB, 2)) MB" -ForegroundColor Cyan
 
-          $response = curl.exe -X POST `
-            -H "X-Release-Key: $env:RELEASE_KEY" `
-            -F "file=@`"$($exe.FullName)`"" `
-            "$env:MASTERTOOL_URL/api/pe/releases/upload" `
-            -w "`nStatus: %{http_code}`n" `
-            2>&1
+          try {
+            $uri = "$env:MASTERTOOL_URL/api/pe/releases/upload"
+            $headers = @{
+              "X-Release-Key" = $env:RELEASE_KEY
+            }
 
-          Write-Host $response
+            $response = Invoke-WebRequest -Uri $uri `
+              -Method POST `
+              -Headers $headers `
+              -Form @{file = $exe} `
+              -ErrorAction Stop
 
-          if ($LASTEXITCODE -eq 0) {
             Write-Host "✓ Upload successful!" -ForegroundColor Green
-          } else {
-            Write-Host "✗ Upload may have failed" -ForegroundColor Yellow
+            Write-Host "Response: $($response.StatusCode)" -ForegroundColor Green
+          }
+          catch {
+            Write-Host "✗ Upload failed!" -ForegroundColor Red
+            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
           }
