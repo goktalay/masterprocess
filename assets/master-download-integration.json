@@ -1,0 +1,152 @@
+{
+  "app": {
+    "id": "process-explorer-windows",
+    "name": "Process Explorer",
+    "version": "1.0.0",
+    "type": "system-tools",
+    "status": "published",
+    "featured": true,
+    "created_at": "2026-11-26T18:00:00Z",
+    "updated_at": "2026-11-26T18:00:00Z"
+  },
+  "metadata": {
+    "title": "Process Explorer - Advanced Process Manager",
+    "description": "Advanced Windows system monitoring and process management tool with real-time CPU, GPU, Memory monitoring, performance analysis and history tracking.",
+    "long_description": "Process Explorer is an advanced Windows process manager that provides comprehensive system monitoring capabilities. Monitor all running processes with real-time CPU, GPU, Memory, and Disk I/O tracking. Features include process hierarchy visualization, performance metrics dashboard, and SQLite-based history database.",
+    "keywords": ["process manager", "windows", "system monitor", "task manager", "performance monitor", "gpu monitor"],
+    "author": "Masterprocess Team",
+    "category": "System Tools",
+    "subcategory": "System Monitoring",
+    "website": "https://github.com/goktalay/masterprocess",
+    "support_url": "https://github.com/goktalay/masterprocess/issues",
+    "documentation_url": "https://github.com/goktalay/masterprocess/wiki",
+    "license": "MIT",
+    "open_source": true
+  },
+  "system_requirements": {
+    "os": "Windows 10 (Build 19041) or later",
+    "architecture": "x86-64",
+    "ram_minimum_mb": 1024,
+    "disk_space_mb": 500,
+    "dotnet_runtime": "8.0",
+    "admin_required": false
+  },
+  "files": [
+    {
+      "id": "portable-zip",
+      "name": "ProcessExplorer-Release.zip",
+      "type": "portable",
+      "size_mb": 25,
+      "download_url": "https://master.download/files/process-explorer/1.0.0/ProcessExplorer-Release.zip",
+      "checksum_sha256": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z",
+      "installation_method": "extract",
+      "default": true
+    },
+    {
+      "id": "installer-exe",
+      "name": "ProcessExplorer-1.0.0-Installer.exe",
+      "type": "installer",
+      "size_mb": 30,
+      "download_url": "https://master.download/files/process-explorer/1.0.0/ProcessExplorer-1.0.0-Installer.exe",
+      "checksum_sha256": "z9y8x7w6v5u4t3s2r1q0p9o8n7m6l5k4j3i2h1g0f9e8d7c6b5a4",
+      "installation_method": "installer",
+      "default": false
+    }
+  ],
+  "screenshots": [
+    {
+      "id": "screenshot-1",
+      "title": "Main Window - Process List",
+      "description": "Process Explorer's main window showing real-time process list with CPU, Memory, and thread information",
+      "url": "https://master.download/images/process-explorer/screenshot-1.png",
+      "order": 1,
+      "thumbnail": "https://master.download/images/process-explorer/screenshot-1-thumb.png"
+    },
+    {
+      "id": "screenshot-2",
+      "title": "Process Details",
+      "description": "Detailed information panel for selected process showing path, window title, GPU memory, and more",
+      "url": "https://master.download/images/process-explorer/screenshot-2.png",
+      "order": 2,
+      "thumbnail": "https://master.download/images/process-explorer/screenshot-2-thumb.png"
+    },
+    {
+      "id": "screenshot-3",
+      "title": "System Metrics",
+      "description": "Real-time system-wide metrics dashboard showing total CPU usage and available memory",
+      "url": "https://master.download/images/process-explorer/screenshot-3.png",
+      "order": 3,
+      "thumbnail": "https://master.download/images/process-explorer/screenshot-3-thumb.png"
+    },
+    {
+      "id": "screenshot-4",
+      "title": "Dark Theme Interface",
+      "description": "Modern dark theme with Nordic color palette for eye-friendly monitoring",
+      "url": "https://master.download/images/process-explorer/screenshot-4.png",
+      "order": 4,
+      "thumbnail": "https://master.download/images/process-explorer/screenshot-4-thumb.png"
+    }
+  ],
+  "media": {
+    "icon": {
+      "url": "https://master.download/icons/process-explorer.png",
+      "size": "256x256",
+      "format": "png"
+    },
+    "banner": {
+      "url": "https://master.download/banners/process-explorer-banner.png",
+      "size": "1920x1080",
+      "format": "png"
+    }
+  },
+  "stats": {
+    "downloads_total": 5243,
+    "downloads_monthly": 892,
+    "rating_average": 4.8,
+    "rating_count": 128,
+    "review_count": 42,
+    "featured_rank": 3
+  },
+  "features": [
+    "Real-time process monitoring",
+    "CPU, Memory, GPU tracking",
+    "Process hierarchy visualization",
+    "SQLite performance history",
+    "Modern dark theme UI",
+    "System metrics dashboard",
+    "MVVM architecture",
+    "No telemetry, 100% open source"
+  ],
+  "roadmap": [
+    {
+      "version": "1.1.0",
+      "date": "December 2026",
+      "features": [
+        "Real-time performance charts",
+        "GPU memory visualization",
+        "Window screenshot capture",
+        "Advanced performance analysis"
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "January 2027",
+      "features": [
+        "Process file handles display",
+        "Network connections monitoring",
+        "System alerts",
+        "Export reports (CSV/PDF)"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "date": "Q1 2027",
+      "features": [
+        "Deep system analysis",
+        "Hex dump analyzer",
+        "Memory layout visualizer",
+        "System integrity checking"
+      ]
+    }
+  ]
+}
