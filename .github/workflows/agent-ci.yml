@@ -1,0 +1,51 @@
+name: mp-agent CI
+
+# Yerel yardımcı (agent/): NativeAOT derleme + kendi sınaması + oturum sınaması.
+on:
+  push:
+    branches: [v2-agent]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (NativeAOT, win-x64)
+        id: publish
+        run: dotnet publish agent/MasterProcess.Agent.csproj -c Release -r win-x64 -o agent-out
+
+      - name: Size
+        shell: pwsh
+        run: |
+          Get-ChildItem agent-out | ForEach-Object { '{0,12:N0}  {1}' -f $_.Length, $_.Name }
+          'mp-agent.exe bytes: {0}' -f (Get-Item agent-out\mp-agent.exe).Length
+
+      - name: Version
+        shell: pwsh
+        run: agent-out\mp-agent.exe --version
+
+      - name: Selftest
+        shell: pwsh
+        run: agent-out\mp-agent.exe --selftest
+
+      - name: Session test
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/agent-session-test.ps1 -Agent agent-out\mp-agent.exe
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        with:
+          name: mp-agent
+          path: agent-out/mp-agent.exe
+          if-no-files-found: error
