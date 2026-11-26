@@ -1,3 +1,6 @@
+using System.Windows;
+using ProcessExplorer.Utils;
+
 namespace ProcessExplorer;
 
 public partial class App : Application

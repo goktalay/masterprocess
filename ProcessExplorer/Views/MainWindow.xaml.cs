@@ -1,3 +1,6 @@
+using System.Windows;
+using ProcessExplorer.ViewModels;
+
 namespace ProcessExplorer.Views;
 
 public partial class MainWindow : Window
