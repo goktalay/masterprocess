@@ -1,0 +1,1 @@
+Master Process 2.0.0 — Mastertool arayüzüyle yeniden yazıldı: süreç ağacı ve satır içi grafikler, süreç başına CPU / bellek / G/Ç / GPU grafikleri, bellek ve disk yerleşim haritaları, hex görüntüleyici (bellek ve dosya), açık dosyalar, pencere görüntüsü, modüller, iş parçacıkları, tarihçe, süreç eylemleri; gece / gündüz teması ve 8 dil.

@@ -1,108 +1,167 @@
 name: Master Process release
 
 # v* etiketi: derle + sına + GitHub Release + mastertool.download'a yükle.
-# Elle çalıştırma (workflow_dispatch): yalnız derleme ve sınama; yükleme yapılmaz, paketler artifact olarak kalır.
+# v2 / main dalına gönderim ve elle çalıştırma (workflow_dispatch): yalnız derleme ve sınama; yükleme yapılmaz,
+# paketler ve ekran görüntüleri artifact olarak kalır.
 on:
   push:
+    branches: [v2, main]
     tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      - name: Version
+      - name: Sürümü etiketten al
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - name: Sürüm
         id: ver
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props); fi
+          V=$(node -p "require('./package.json').version")
           [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Geçersiz sürüm: $V"; exit 1; }
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Sürüm: $V"
 
-      # x64, .NET çalışma zamanı pakette (kurulu .NET gerekmez). Windows ARM64'te x64 öykünmesiyle çalışır.
-      - name: Publish (setup files)
-        run: dotnet publish ProcessExplorer/ProcessExplorer.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -p:DebugType=none -o publish/setup
+      - run: npm ci
 
-      - name: Publish (portable, single file)
-        run: dotnet publish ProcessExplorer/ProcessExplorer.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.ver.outputs.version }} -p:DebugType=none -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish/portable
+      - run: npm test
 
-      # Master Tool yüklü uygulamayı "Master Process.exe" adıyla arar; apphost yeniden adlandırılabilir
-      - name: Rename executables
+      # Yerel yardımcı: Windows verisini (süreçler, bellek haritası, tutamaçlar, pencere görüntüsü…) sağlayan tek dosya.
+      # NativeAOT: kurulu .NET gerekmez.
+      - name: Yardımcıyı derle (NativeAOT, win-x64)
+        run: dotnet publish agent/MasterProcess.Agent.csproj -c Release -r win-x64 -o agent-out
+
+      - name: Yardımcı — kendi sınaması
         shell: pwsh
         run: |
-          $v = '${{ steps.ver.outputs.version }}'
-          Rename-Item 'publish/setup/MasterProcess.exe' 'Master Process.exe'
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item 'publish/portable/MasterProcess.exe' "dist/Master-Process-Portable-$v.exe"
-          Get-ChildItem publish/setup | Measure-Object Length -Sum | ForEach-Object { "setup files: $($_.Count), $([math]::Round($_.Sum / 1MB, 1)) MB" }
-
-      - name: Build installer (Inno Setup)
-        shell: pwsh
-        run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
-          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" setup.iss
+          'mp-agent.exe: {0:N0} bayt' -f (Get-Item agent-out\mp-agent.exe).Length
+          agent-out\mp-agent.exe --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-ChildItem dist/*.exe | ForEach-Object { "$($_.Name)  $([math]::Round($_.Length / 1MB, 1)) MB" }
+          agent-out\mp-agent.exe --selftest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Screen size for screenshots
+      - name: Yardımcı — oturum sınaması
+        shell: pwsh
+        run: ./scripts/agent-session-test.ps1 -Agent agent-out\mp-agent.exe
+
+      - name: Exe'leri derle
+        run: npx electron-builder --win --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Paket içeriği
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/*.exe | ForEach-Object { "$($_.Name)  $([math]::Round($_.Length / 1MB, 1)) MB" }
+          if (-not (Test-Path 'dist/win-unpacked/resources/agent/mp-agent.exe')) { throw 'Pakette mp-agent.exe yok' }
+
+      - name: Ekran çözünürlüğü
         continue-on-error: true
         shell: powershell
         run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
 
-      # Kurulumu sessizce kur, Master Tool'un aradığı kaydı ve dosyayı doğrula, kurulu uygulamayı çalıştır
-      - name: Test installer and installed app
-        shell: powershell
+      # 1.0.0 (.NET / Inno Setup) kurulu bir bilgisayarda yükseltme: eski kayıt kalkmalı, yeni sürüm aynı klasöre kurulmalı
+      - name: Kurulum sınaması (1.0.0 üzerine yükseltme)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $v = '${{ steps.ver.outputs.version }}'
-          $setup = Start-Process -FilePath "dist\Master-Process-Setup-$v.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER' -PassThru -Wait
-          if ($setup.ExitCode -ne 0) { throw "Installer exit code $($setup.ExitCode)" }
+          $innoKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{F1E8C5A0-3B2D-4A5E-8C9A-B1D2E5F7A8C3}_is1'
+          New-Item -ItemType Directory -Force old | Out-Null
+          gh release download v1.0.0 --repo $env:GITHUB_REPOSITORY --pattern 'Master-Process-Setup-1.0.0.exe' --dir old
+          if ($LASTEXITCODE -eq 0) {
+            $p = Start-Process -FilePath 'old\Master-Process-Setup-1.0.0.exe' -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER' -PassThru -Wait
+            "1.0.0 kurulumu çıkış kodu: $($p.ExitCode); kayıt var: $(Test-Path -LiteralPath $innoKey)"
+            if (-not (Test-Path -LiteralPath $innoKey)) { Write-Host '::warning::1.0.0 kurulamadı; yükseltme yolu sınanmadı.' }
+          } else {
+            Write-Host '::warning::1.0.0 kurulumu indirilemedi; yükseltme yolu sınanmadı.'
+          }
+          $global:LASTEXITCODE = 0
+          $p = Start-Process -FilePath "dist\Master-Process-Setup-$v.exe" -ArgumentList '/S', '/currentuser' -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Kurulum çıkış kodu $($p.ExitCode)" }
+          if (Test-Path -LiteralPath $innoKey) { throw '1.0.0 kaydı kaldırılmadı' }
           $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object { $_.DisplayName -like 'Master Process*' } | Select-Object -First 1
-          if ($null -eq $entry) { throw 'Uninstall entry "Master Process" not found.' }
-          "DisplayName=$($entry.DisplayName) DisplayVersion=$($entry.DisplayVersion) InstallLocation=$($entry.InstallLocation)"
-          if ($entry.DisplayVersion -ne $v) { throw "DisplayVersion is $($entry.DisplayVersion), expected $v" }
-          $exe = Join-Path $entry.InstallLocation 'Master Process.exe'
-          if (-not (Test-Path $exe)) { throw "Missing: $exe" }
-          .\scripts\ci-smoke.ps1 -Exe $exe -Shot "shots\master-process.png" -ExpectDb
+          if ($null -eq $entry) { throw 'Kaldırma kaydı "Master Process" bulunamadı' }
+          "DisplayName=$($entry.DisplayName) DisplayVersion=$($entry.DisplayVersion) DisplayIcon=$($entry.DisplayIcon)"
+          if ($entry.DisplayVersion -ne $v) { throw "DisplayVersion $($entry.DisplayVersion), beklenen $v" }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\Mastertool\Master Process\Master Process.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw "Yok: $exe" }
+          $agent = Join-Path (Split-Path $exe) 'resources\agent\mp-agent.exe'
+          if (-not (Test-Path -LiteralPath $agent)) { throw "Yok: $agent" }
+          "Kurulu: $exe"
+          "MP_APP_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Test portable
-        shell: powershell
+      # Gerçek pencere + gerçek yardımcı + bu makinenin gerçek süreçleri (scripts/harness.js)
+      - name: Uçtan uca (kurulu uygulama)
+        run: node scripts/e2e-electron.js --shots shots/e2e
+
+      - name: Uçtan uca (taşınabilir)
+        if: ${{ !cancelled() }}
+        shell: pwsh
         run: |
-          $v = '${{ steps.ver.outputs.version }}'
-          .\scripts\ci-smoke.ps1 -Exe "dist\Master-Process-Portable-$v.exe" -ExpectDb
+          $env:MP_APP_EXE = (Resolve-Path "dist\Master-Process-Portable-${{ steps.ver.outputs.version }}.exe").Path
+          node scripts/e2e-electron.js --shots shots/e2e-portable
+
+      # mastertool.download tanıtım sayfasındaki görüntüler buradan alınır; yayını durdurmaz
+      - name: Tanıtım ekran görüntüleri
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node scripts/screenshots.js shots/promo --langs tr,en
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ !cancelled() }}
         with:
-          name: master-process-${{ steps.ver.outputs.version }}
-          path: |
-            dist/*.exe
-            shots/*.png
+          name: Master-Process-shots
+          path: shots/
           retention-days: 30
 
-      - name: GitHub Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Master-Process-windows
+          path: dist/*.exe
+          retention-days: 14
+
+      - name: Release'e ekle
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: Master Process ${{ steps.ver.outputs.version }}
-          generate_release_notes: true
           files: dist/*.exe
+          generate_release_notes: true
 
-      - name: Upload to mastertool.download
+      # Exe kullanıcılara Hesabım ve Master Tool üzerinden dağıtılır (mastertool.download, uygulama kodu "mp").
+      # Anahtar depo secret'ı MASTERPROCESS_RELEASE_KEY; tanımlı değilse adım uyarıyla atlanır.
+      # Kurulum ve portable ayrı isteklerle parçalı gönderilir (scripts/upload-mastertool.sh).
+      - name: mastertool.download'a yükle
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
-          MASTERPROCESS_RELEASE_KEY: ${{ secrets.MASTERPROCESS_RELEASE_KEY || secrets.MP_RELEASE_KEY }}
+          MASTERPROCESS_RELEASE_KEY: ${{ secrets.MASTERPROCESS_RELEASE_KEY }}
         run: |
-          V='${{ steps.ver.outputs.version }}'
-          scripts/upload-mastertool.sh "$V" "dist/Master-Process-Setup-$V.exe" "Master Process $V" "dist/Master-Process-Portable-$V.exe"
+          V="${GITHUB_REF_NAME#v}"
+          NOTES=$(cat "docs/release-notes/$V.txt" 2>/dev/null || true)
+          bash scripts/upload-mastertool.sh "$V" "dist/Master-Process-Setup-$V.exe" "$NOTES" "dist/Master-Process-Portable-$V.exe"

@@ -66,3 +66,23 @@
   ${GetParent} "$INSTDIR" $R0
   RMDir "$R0"
 !macroend
+
+; 1.0.0 sürümü (.NET / Inno Setup) aynı klasöre, aynı exe ve kısayol adlarıyla kuruluyordu. Kaldırıcısı yeni dosyalar
+; yazıldıktan sonra çalışırsa yeni exe'yi ve kısayolları da silerdi; bu yüzden kurulum başlamadan önce sessizce kaldırılır.
+; Tüm kullanıcılar için kurulmuş bir 1.0.0, yönetici olmayan kurulumda kaldırılamaz; o durumda atlanır.
+!define MP_INNO_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\{F1E8C5A0-3B2D-4A5E-8C9A-B1D2E5F7A8C3}_is1"
+
+!macro _mpRemoveInno ROOT
+  ClearErrors
+  ReadRegStr $R7 ${ROOT} "${MP_INNO_KEY}" "UninstallString"
+  ${If} $R7 != ""
+    ExecWait '$R7 /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
+    ClearErrors
+  ${EndIf}
+!macroend
+
+; .onInit içinde, kayıt görünümü ayarlandıktan sonra çalışır (kaldırıcı üretim derlemesinde çağrılmaz)
+!macro customInit
+  !insertmacro _mpRemoveInno HKCU
+  !insertmacro _mpRemoveInno HKLM
+!macroend
