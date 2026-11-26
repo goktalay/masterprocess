@@ -290,3 +290,4 @@ body {
 .hexv-body .hx-k { color: var(--text-3); }
 .hexv-body .hx-empty { color: var(--text-3); font-family: var(--font); white-space: normal; }
 .hexv-foot { padding: 4px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-3); min-height: 22px; }
+.toast.warn { border-inline-start-color: var(--warn); }
