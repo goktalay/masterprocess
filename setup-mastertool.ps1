@@ -74,6 +74,9 @@ function Build-ProcessExplorer {
     Write-Host "Build cache temizleniyor..." -ForegroundColor $Cyan
     & dotnet clean -c Release 2>&1 | Out-Null
 
+    # Remove output directories completely
+    Remove-Item -Recurse -Force "ProcessExplorer/bin", "ProcessExplorer/obj" -ErrorAction SilentlyContinue
+
     Write-Host "Release build yapiliyor..." -ForegroundColor $Cyan
     & dotnet build -c Release 2>&1
 
