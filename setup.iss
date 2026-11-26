@@ -32,7 +32,6 @@ ChangesAssociations=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-Name: "turkish"; MessagesFile: "compiler:Turkish.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -45,7 +44,7 @@ Source: "bin\Release\net8.0-windows\*.json"; DestDir: "{app}"; Flags: ignorevers
 Source: "bin\Release\net8.0-windows\*.pdb"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "SETUP.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "ProcessExplorer\Resources\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+; Source: "ProcessExplorer\Resources\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
