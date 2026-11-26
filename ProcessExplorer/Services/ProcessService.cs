@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Management;
 using ProcessExplorer.Models;
 
 namespace ProcessExplorer.Services;
