@@ -58,3 +58,27 @@ jobs:
           } else {
             Write-Host "⚠ InnoSetup not found, skipping installer"
           }
+
+      - name: Upload to mastertool.download
+        if: secrets.PROCESSEXPLORER_RELEASE_KEY != ''
+        env:
+          RELEASE_KEY: ${{ secrets.PROCESSEXPLORER_RELEASE_KEY }}
+          MASTERTOOL_URL: https://mastertool.download
+        run: |
+          $exe = Get-Item "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe"
+          Write-Host "Uploading ProcessExplorer.exe to mastertool.download..." -ForegroundColor Green
+
+          $response = curl.exe -X POST `
+            -H "X-Release-Key: $env:RELEASE_KEY" `
+            -F "file=@`"$($exe.FullName)`"" `
+            "$env:MASTERTOOL_URL/api/pe/releases/upload" `
+            -w "`nStatus: %{http_code}`n" `
+            2>&1
+
+          Write-Host $response
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ Upload successful!" -ForegroundColor Green
+          } else {
+            Write-Host "✗ Upload may have failed" -ForegroundColor Yellow
+          }
