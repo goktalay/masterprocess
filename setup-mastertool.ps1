@@ -92,8 +92,8 @@ function Build-ProcessExplorer {
     }
 
     # Verify output exists
-    if (-not (Test-Path "bin/Release/net8.0-windows/ProcessExplorer.exe")) {
-        Write-Error-Custom "Build output bulunamadi: bin/Release/net8.0-windows/ProcessExplorer.exe"
+    if (-not (Test-Path "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe")) {
+        Write-Error-Custom "Build output bulunamadi: ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe"
     }
     Write-Success "Build tamamlandi"
 
