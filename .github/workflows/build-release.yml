@@ -43,6 +43,7 @@ jobs:
           retention-days: 30
 
       - name: Create installer
+        continue-on-error: true
         run: |
           $ISCCPaths = @(
             "C:\Program Files\Inno Setup 7\ISCC.exe",
@@ -56,30 +57,4 @@ jobs:
             Write-Host "✓ Installer created"
           } else {
             Write-Host "⚠ InnoSetup not found, skipping installer"
-          }
-
-      - name: Upload to mastertool.download
-        if: secrets.PROCESSEXPLORER_RELEASE_KEY != ''
-        env:
-          RELEASE_KEY: ${{ secrets.PROCESSEXPLORER_RELEASE_KEY }}
-        run: |
-          $exe = Get-Item "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe"
-          $installer = Get-Item "dist\ProcessExplorer-*.exe" -ErrorAction SilentlyContinue
-
-          Write-Host "Uploading to mastertool.download..."
-
-          # Upload portable exe
-          $response = curl.exe -X POST `
-            -H "X-Release-Key: $env:RELEASE_KEY" `
-            -F "file=@$($exe.FullName)" `
-            "https://mastertool.download/api/pe/releases/upload"
-
-          Write-Host "Response: $response"
-
-          if ($installer) {
-            Write-Host "Uploading installer..."
-            curl.exe -X POST `
-              -H "X-Release-Key: $env:RELEASE_KEY" `
-              -F "file=@$($installer.FullName)" `
-              "https://mastertool.download/api/pe/releases/upload"
           }
