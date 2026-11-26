@@ -1,14 +1,23 @@
-# Process Explorer - Deploy to master.download Script
-# PowerShell script for automated deployment
+# Process Explorer - Deploy to mastertool.download Script
+# PowerShell script for automated deployment to mastertool.download
+# API: https://mastertool.download with X-Release-Key authentication
 
 param(
-    [string]$ApiUrl = "https://api.master.download",
-    [string]$ApiKey = "",
+    [string]$ReleaseKey = "",
+    [string]$Version = "1.0.0",
+    [string]$SetupFile = "Process-Explorer-Setup-1.0.0.exe",
+    [string]$PortableFile = "Process-Explorer-Portable-1.0.0.exe",
     [switch]$Test = $false,
-    [switch]$SkipUpload = $false
+    [switch]$SkipUpload = $false,
+    [switch]$PortableOnly = $false
 )
 
 $ErrorActionPreference = "Stop"
+
+# mastertool.download Configuration
+$ApiUrl = "https://mastertool.download"
+$AppCode = "pe"  # Process Explorer - 2 letter code
+$BaseUploadUrl = "$ApiUrl/api/$AppCode/releases/$Version"
 
 # Colors
 $Green = [System.ConsoleColor]::Green
@@ -27,134 +36,213 @@ function Write-Error-Custom {
     exit 1
 }
 
+function Test-ExeFile {
+    param([string]$FilePath)
+    if (-not (Test-Path $FilePath)) {
+        return $false
+    }
+    $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+    # Check for MZ header
+    return ($bytes.Length -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A)
+}
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor $Cyan
-Write-Host "Process Explorer - Master Download Deploy" -ForegroundColor $Cyan
+Write-Host "Process Explorer - mastertool.download Deploy" -ForegroundColor $Cyan
 Write-Host "========================================" -ForegroundColor $Cyan
 Write-Host ""
 
-# Check requirements
-Write-Status "Checking requirements..." $Yellow
-
-if (-not (Test-Path "dist\ProcessExplorer-Release.zip")) {
-    Write-Error-Custom "ProcessExplorer-Release.zip not found in dist\ folder"
+# Check Release Key
+if (-not $ReleaseKey) {
+    Write-Error-Custom "Release key required! Use -ReleaseKey or set PROCESSEXPLORER_RELEASE_KEY env var"
 }
-Write-Status "✓ Portable ZIP found" $Green
+Write-Status "✓ Release key configured" $Green
 
-if (-not (Test-Path "assets\master-download-integration.json")) {
-    Write-Error-Custom "master-download-integration.json not found in assets\ folder"
-}
-Write-Status "✓ Integration JSON found" $Green
+# Validate EXE files
+Write-Status "Validating executable files..." $Yellow
 
-# Check API Key
-if (-not $ApiKey) {
-    Write-Status "No API key provided. Use -ApiKey parameter to upload." $Yellow
-    $SkipUpload = $true
+$SetupExists = Test-ExeFile "dist\$SetupFile"
+$PortableExists = Test-ExeFile "dist\$PortableFile"
+
+if (-not $SetupExists -and -not $PortableExists) {
+    Write-Error-Custom "No valid EXE files found. Setup or Portable exe required."
 }
 
-# Prepare metadata
-Write-Status "Preparing deployment package..." $Yellow
+if ($SetupExists) {
+    $SetupSize = (Get-Item "dist\$SetupFile").Length / 1MB
+    $SetupSha = (Get-FileHash "dist\$SetupFile" -Algorithm SHA256).Hash
+    Write-Status "✓ Setup EXE: $SetupFile ($([Math]::Round($SetupSize, 2)) MB)" $Green
+    Write-Status "  SHA256: $($SetupSha.Substring(0, 16))..." $Green
+} else {
+    Write-Status "⚠ Setup EXE not found (required for full installation)" $Yellow
+}
 
-$Metadata = Get-Content "assets\master-download-integration.json" | ConvertFrom-Json
-$ZipFile = "dist\ProcessExplorer-Release.zip"
-$ZipSize = (Get-Item $ZipFile).Length / 1MB
+if ($PortableExists) {
+    $PortableSize = (Get-Item "dist\$PortableFile").Length / 1MB
+    $PortableSha = (Get-FileHash "dist\$PortableFile" -Algorithm SHA256).Hash
+    Write-Status "✓ Portable EXE: $PortableFile ($([Math]::Round($PortableSize, 2)) MB)" $Green
+    Write-Status "  SHA256: $($PortableSha.Substring(0, 16))..." $Green
+} else {
+    Write-Status "⚠ Portable EXE not found (optional)" $Yellow
+}
 
-Write-Status "Package Info:"
-Write-Host "  Name: $($Metadata.app.name)"
-Write-Host "  Version: $($Metadata.app.version)"
-Write-Host "  Size: $([Math]::Round($ZipSize, 2)) MB"
-Write-Host "  Status: $($Metadata.app.status)"
+Write-Host ""
+Write-Status "Deployment Info:" $Cyan
+Write-Host "  API URL: $ApiUrl"
+Write-Host "  App Code: $AppCode"
+Write-Host "  Version: $Version"
+Write-Host "  Release Endpoint: $BaseUploadUrl"
 Write-Host ""
 
-# Calculate checksum
-Write-Status "Computing SHA256 checksum..." $Yellow
-$FileHash = (Get-FileHash $ZipFile -Algorithm SHA256).Hash
-$Metadata.files[0].checksum_sha256 = $FileHash.ToLower()
-Write-Status "✓ Checksum: $($FileHash.Substring(0, 16))..." $Green
-
-# Simulate API calls (for demo)
+# Upload files
 if (-not $Test) {
     if ($SkipUpload) {
-        Write-Status "Skipping upload (no API key provided)" $Yellow
-        Write-Status "To upload, run with: -ApiKey YOUR_API_KEY" $Yellow
+        Write-Status "Skipping upload (--SkipUpload flag set)" $Yellow
     } else {
-        Write-Status "Uploading to master.download..." $Yellow
+        Write-Status "Uploading to mastertool.download..." $Yellow
 
-        # In production, these would be actual API calls:
-        # POST /api/apps/register
-        # POST /api/apps/{id}/files
-        # PUT /api/apps/{id}/publish
+        # Setup file upload
+        if ($SetupExists) {
+            Write-Status "Uploading setup executable..." $Yellow
+            $UploadUrl = "$BaseUploadUrl/setup"
+            $Headers = @{
+                "X-Release-Key" = $ReleaseKey
+            }
 
-        Write-Status "✓ Application registered" $Green
-        Write-Status "✓ Files uploaded" $Green
-        Write-Status "✓ Metadata synced" $Green
-        Write-Status "✓ Published successfully" $Green
+            # Multipart upload (single file for < 100MB)
+            $Form = @{
+                file = Get-Item "dist\$SetupFile"
+                part = "0"
+                parts = "1"
+                filename = $SetupFile
+                notes = "Process Explorer $Version - Setup Installer"
+            }
+
+            try {
+                $Response = Invoke-WebRequest -Uri $UploadUrl -Method POST -Headers $Headers `
+                    -Form $Form -ErrorAction Stop
+                Write-Status "✓ Setup uploaded: $($Response.StatusCode)" $Green
+            } catch {
+                Write-Host "Upload response: $($_.Exception.Response.StatusCode)" -ForegroundColor $Red
+                Write-Host "Error: $($_.Exception.Message)" -ForegroundColor $Red
+            }
+        }
+
+        # Portable file upload
+        if ($PortableExists -and -not $PortableOnly) {
+            Write-Status "Uploading portable executable..." $Yellow
+            $UploadUrl = "$BaseUploadUrl/portable"
+            $Headers = @{
+                "X-Release-Key" = $ReleaseKey
+            }
+
+            $Form = @{
+                file = Get-Item "dist\$PortableFile"
+                part = "0"
+                parts = "1"
+                filename = $PortableFile
+            }
+
+            try {
+                $Response = Invoke-WebRequest -Uri $UploadUrl -Method POST -Headers $Headers `
+                    -Form $Form -ErrorAction Stop
+                Write-Status "✓ Portable uploaded: $($Response.StatusCode)" $Green
+            } catch {
+                Write-Host "Upload response: $($_.Exception.Response.StatusCode)" -ForegroundColor $Red
+                Write-Host "Error: $($_.Exception.Message)" -ForegroundColor $Red
+            }
+        }
+
+        Write-Status "✓ Upload completed" $Green
     }
 } else {
     Write-Status "TEST MODE - Simulating deployment" $Yellow
-    Write-Status "✓ Would upload: ProcessExplorer-Release.zip ($([Math]::Round($ZipSize, 2)) MB)" $Green
-    Write-Status "✓ Would register application: $($Metadata.app.name) v$($Metadata.app.version)" $Green
-    Write-Status "✓ Would publish to: $($Metadata.metadata.website)" $Green
-}
-
-Write-Host ""
-Write-Status "Deployment Information:" $Cyan
-Write-Host ""
-Write-Host "Application Details:"
-Write-Host "  ID: $($Metadata.app.id)"
-Write-Host "  Name: $($Metadata.app.name)"
-Write-Host "  Version: $($Metadata.app.version)"
-Write-Host "  Type: $($Metadata.app.type)"
-Write-Host "  License: $($Metadata.metadata.license)"
-Write-Host ""
-
-Write-Host "System Requirements:"
-Write-Host "  OS: $($Metadata.system_requirements.os)"
-Write-Host "  RAM: $($Metadata.system_requirements.ram_minimum_mb) MB minimum"
-Write-Host "  .NET: $($Metadata.system_requirements.dotnet_runtime)"
-Write-Host ""
-
-Write-Host "Download Options:"
-foreach ($file in $Metadata.files) {
-    Write-Host "  [$($file.id)]"
-    Write-Host "    File: $($file.name)"
-    Write-Host "    Type: $($file.type)"
-    Write-Host "    Size: $($file.size_mb) MB"
-    Write-Host "    SHA256: $($file.checksum_sha256.Substring(0, 16))..."
-    Write-Host ""
-}
-
-Write-Host "Statistics:"
-Write-Host "  Total Downloads: $($Metadata.stats.downloads_total)"
-Write-Host "  Monthly Downloads: $($Metadata.stats.downloads_monthly)"
-Write-Host "  Rating: $($Metadata.stats.rating_average)/5 ($($Metadata.stats.rating_count) ratings)"
-Write-Host ""
-
-Write-Host "Roadmap:"
-foreach ($milestone in $Metadata.roadmap) {
-    Write-Host "  v$($milestone.version) ($($milestone.date))"
-    foreach ($feature in $milestone.features) {
-        Write-Host "    • $feature"
+    if ($SetupExists) {
+        Write-Status "✓ Would upload: $SetupFile ($([Math]::Round($SetupSize, 2)) MB)" $Green
+    }
+    if ($PortableExists) {
+        Write-Status "✓ Would upload: $PortableFile ($([Math]::Round($PortableSize, 2)) MB)" $Green
     }
 }
 
 Write-Host ""
-Write-Status "Deployment package ready!" $Green
+Write-Status "Process Explorer v$Version - Ready for mastertool.download" $Green
 Write-Host ""
 
-if ($SkipUpload -and -not $Test) {
-    Write-Host "NEXT STEPS:" -ForegroundColor $Yellow
-    Write-Host "1. Create master.download account (if not exists)"
-    Write-Host "2. Get API key from account settings"
-    Write-Host "3. Run deploy script with: .\deploy-to-master-download.ps1 -ApiKey YOUR_KEY"
-    Write-Host "4. Files will be uploaded and published"
-    Write-Host ""
+Write-Host "BEFORE UPLOADING:" -ForegroundColor $Yellow
+Write-Host ""
+Write-Host "These files must exist on your computer:"
+Write-Host "  • dist\$SetupFile (Installer)"
+Write-Host "  • dist\$PortableFile (Portable, optional)"
+Write-Host ""
+
+Write-Host "ENVIRONMENT SETUP:" -ForegroundColor $Yellow
+Write-Host "1. Set environment variable: PROCESSEXPLORER_RELEASE_KEY=<your-key>"
+Write-Host "2. Or pass to script: -ReleaseKey <your-key>"
+Write-Host ""
+
+Write-Host "MASTERTOOL INTEGRATION STEPS:" -ForegroundColor $Yellow
+Write-Host ""
+Write-Host "Before file upload, hepgo repository must be updated:"
+Write-Host ""
+Write-Host "1. Edit sshm/main.py → Add to TOOLS dict:"
+Write-Host "   'pe': {"
+Write-Host "       'name': 'Process Explorer',"
+Write-Host "       'slug': 'process-explorer',"
+Write-Host "       'group': 'apps',"
+Write-Host "       'path': '/process-explorer',"
+Write-Host "       'setup': 'Process-Explorer-Setup-{v}.exe',"
+Write-Host "       'portable': 'Process-Explorer-Portable-{v}.exe'"
+Write-Host "   }"
+Write-Host ""
+Write-Host "2. Add description:"
+Write-Host "   TOOLS['pe']['desc'] = 'Advanced Windows process monitor with real-time CPU/GPU/Memory tracking'"
+Write-Host ""
+Write-Host "3. Edit sshm/settings.py → Add to RELEASE_KEYS:"
+Write-Host "   'pe': os.environ.get('PROCESSEXPLORER_RELEASE_KEY', '')"
+Write-Host ""
+Write-Host "4. Add static files to central/sshmaster_server/static/:"
+Write-Host "   • mt/araclar/process-explorer.html (product page)"
+Write-Host "   • brand/pe.svg (128x128)"
+Write-Host "   • brand/pe.png (128x128)"
+Write-Host "   • brand/pe-512.png (512x512)"
+Write-Host ""
+Write-Host "5. Update server .env with PROCESSEXPLORER_RELEASE_KEY and redeploy"
+Write-Host ""
+
+Write-Host "FILE UPLOAD:" -ForegroundColor $Yellow
+Write-Host ""
+if ($Test) {
+    Write-Status "TEST MODE - Simulating uploads" $Cyan
+    if ($SetupExists) {
+        Write-Host "  POST $BaseUploadUrl/setup"
+    }
+    if ($PortableExists) {
+        Write-Host "  POST $BaseUploadUrl/portable"
+    }
+} else {
+    Write-Host "Upload script will POST to: $BaseUploadUrl/setup and /portable"
 }
+
+Write-Host ""
+Write-Host "PRODUCTION DEPLOYMENT:" -ForegroundColor $Yellow
+Write-Host "1. Merge hepgo changes to main branch"
+Write-Host "2. Deploy server (or prod CD pipeline)"
+Write-Host "3. Run this script: .\deploy-to-master-download.ps1 -ReleaseKey YOUR_KEY"
+Write-Host "4. Files upload and register automatically"
+Write-Host "5. App appears on mastertool.download catalog"
+Write-Host ""
+
+Write-Host "AFTER UPLOAD:" -ForegroundColor $Cyan
+Write-Host "• Verify on: https://mastertool.download/api/mt/apps"
+Write-Host "• Download from: https://mastertool.download/api/pe/releases/latest"
+Write-Host "• Product page: https://mastertool.download/process-explorer"
+Write-Host ""
 
 if ($Test) {
     Write-Status "✓ Test mode completed successfully" $Green
 } else {
-    Write-Status "✓ Deployment completed successfully" $Green
+    Write-Status "✓ Deployment check completed" $Green
 }
 
 Write-Host ""
