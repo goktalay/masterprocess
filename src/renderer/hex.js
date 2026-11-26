@@ -80,7 +80,7 @@ const HEX = (() => {
     host.innerHTML = '';
     const el = h(`<div class="hexv">
       <div class="hexv-bar">
-        <span class="hexv-title" title="${esc(src.title)}">${icon('file')}<span>${esc(src.title)}</span></span>
+        <span class="hexv-title" title="${esc(src.title)}">${icon('file')}<span>${ltr(esc(src.title))}</span></span>
         <span class="spacer"></span>
         <div class="seg sm" data-role="mode"><button data-m="hex" class="on">${esc(t('hex.modeHex'))}</button><button data-m="str">${esc(t('hex.modeStrings'))}</button></div>
         ${src.live ? `<label class="check sm" title="${esc(t('hex.liveHint'))}"><input type="checkbox" data-role="live"><span>${esc(t('hex.live'))}</span></label>` : ''}

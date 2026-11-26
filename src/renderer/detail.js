@@ -139,7 +139,7 @@ const DETAIL = (() => {
     const i = cur.info;
     if (cur.exited) out.push(`<span class="badge err">${esc(t('d.exited'))}</span>`);
     if (i) {
-      if (i.suspended) out.push(`<span class="badge warn">${esc(t('d.suspended'))}</span>`);
+      if (i.suspended && !cur.exited) out.push(`<span class="badge warn">${esc(t('d.suspended'))}</span>`);
       if (i.elevated) out.push(`<span class="badge warn">${icon('shield')}${esc(t('d.elevated'))}</span>`);
       if (i.arch) out.push(`<span class="badge">${esc(i.arch)}</span>`);
       if (i.priority && i.priority !== 'normal') out.push(`<span class="badge acc">${esc(t(`prio.${i.priority}`))}</span>`);
@@ -234,7 +234,7 @@ const DETAIL = (() => {
         ioR: FMT.bytes(c.ioReadBytes), ioW: FMT.bytes(c.ioWriteBytes), ioO: FMT.bytes(c.ioOtherBytes),
       };
     }
-    const LABELS = [['threads', 'col.threads'], ['handles', 'col.handles'], ['gdi', 'g.gdi'], ['user', 'g.userObj'], ['ws', 'g.ws'], ['peakWs', 'g.peakWs'], ['priv', 'g.priv'], ['virt', 'g.virt'],
+    const LABELS = [['threads', 'col.threads'], ['handles', 'col.handles'], ...(APP.mon.kind === 'win' ? [['gdi', 'g.gdi'], ['user', 'g.userObj']] : []), ['ws', 'g.ws'], ['peakWs', 'g.peakWs'], ['priv', 'g.priv'], ['virt', 'g.virt'],
       ['pageFaults', 'g.pageFaults'], ['kernel', 'g.kernelTime'], ['userT', 'g.userTime'], ['ioR', 'g.ioRead'], ['ioW', 'g.ioWrite'], ['ioO', 'g.ioOther']];
     function build() {
       const i = cur.info;
@@ -367,7 +367,7 @@ const DETAIL = (() => {
           const it = shown[k];
           const [cls, key] = typeOf(it);
           return `<span class="mono">${ltr(FMT.addr(it.base, 16))}</span><span class="num">${esc(FMT.bytes(it.size))}</span><span><i class="dot" style="--c:var(--r-${cls})"></i>${esc(t(key))}</span>`
-            + `<span class="mono">${esc(FMT.protect(it.protect))}</span><span class="num">${inRam(it)}</span><span class="dim start" title="${esc(it.name || '')}">${esc(it.name || '')}</span>`;
+            + `<span class="mono">${esc(FMT.protect(it.protect))}</span><span class="num">${inRam(it)}</span><span class="dim start" title="${esc(it.name || '')}">${it.name ? ltr(esc(it.name)) : ''}</span>`;
         },
         onClick: (k) => pick(shown[k], false),
       });
@@ -416,7 +416,7 @@ const DETAIL = (() => {
         <span class="lg"><i style="--c:var(--r-mapped)"></i>${esc(t('mem.mapped'))}</span><span class="lg-ramp">${esc(t('mem.rampLow'))}<i></i>${esc(t('mem.rampHigh'))}</span></div>
         <div class="note" style="margin-top:6px">${esc(t('mem.mapHint'))}${mm.truncated ? ' ' + esc(t('d.truncated')) : ''}</div></div></div>`));
       el.appendChild(h(`<div class="bar-row"><input class="input sm" type="search" spellcheck="false" data-a="filter" placeholder="${esc(t('mem.filter'))}" style="flex:1;min-width:160px"></div>`));
-      list = vlist(el, { cols: '150px 84px 104px 64px 70px minmax(0,1fr)', grow: false, height: 250,
+      list = vlist(el, { cols: '150px 84px 100px 82px 70px minmax(0,1fr)', grow: false, height: 250,
         head: [[t('mem.addr')], [t('g.size'), 'num'], [t('mem.type')], [t('mem.protect')], [t('mem.inRam'), 'num'], [t('mem.name')]] });
       el.appendChild(h('<div data-r="hex"></div>'));
       applyFilter();
@@ -471,7 +471,7 @@ const DETAIL = (() => {
         count: shown.length, top: true, sel: shown.indexOf(files[sel]), empty: t(files.length ? 'disk.noMatch' : 'disk.noFiles'),
         render: (k) => {
           const f = shown[k];
-          return `<span class="start" title="${esc(f.path)}">${esc(f.path)}</span><span class="dim">${esc(t(f.kind === 'dir' ? 'disk.dir' : 'disk.file'))}</span><span class="num">${f.kind === 'dir' || !(f.size >= 0) ? '—' : esc(FMT.bytes(f.size))}</span>`;
+          return `<span class="start" title="${esc(f.path)}">${ltr(esc(f.path))}</span><span class="dim">${esc(t(f.kind === 'dir' ? 'disk.dir' : 'disk.file'))}</span><span class="num">${f.kind === 'dir' || !(f.size >= 0) ? '—' : esc(FMT.bytes(f.size))}</span>`;
         },
         onClick: (k) => pick(files.indexOf(shown[k])),
         onMenu: (k, e) => pathMenu(shown[k].path, e),
@@ -510,6 +510,7 @@ const DETAIL = (() => {
           <span class="chip">${esc(t('disk.cluster'))} <b>${esc(FMT.bytes(fm.clusterSize))}</b></span>
           <span class="chip" title="${esc(t('disk.fragmentsHint'))}">${esc(t('disk.fragments'))} <b>${FMT.int(fm.fragments, LANG)}</b></span></div>`
           + (fm.resident ? `<div class="note" style="margin-top:8px">${esc(t('disk.resident'))}</div>`
+            : !(fm.extents || []).length ? `<div class="note" style="margin-top:8px">${esc(t('disk.noExtents'))}</div>`
             : `<canvas class="cm-canvas" style="margin-top:10px"></canvas><div class="cm-labels"><span>${esc(t('disk.volStart'))}</span><span>${esc(t('disk.volEnd', { size: FMT.bytes((fm.totalClusters || 0) * (fm.clusterSize || 0)) }))}</span></div>
                <div class="note" style="margin-top:4px">${esc(t('disk.mapHint'))}${fm.truncated ? ' ' + esc(t('d.truncated')) : ''}</div>`);
         const canvas = mapEl.querySelector('canvas');
@@ -683,7 +684,7 @@ const DETAIL = (() => {
         count: shown.length, top: true, empty: t('mod.none'),
         render: (k) => {
           const m = shown[k];
-          return `<span title="${esc(m.path)}">${esc(FMT.baseName(m.path) || m.path)}</span><span class="mono">${ltr(FMT.addr(m.base, 16))}</span><span class="num">${esc(FMT.bytes(m.size))}</span><span class="dim start" title="${esc(m.path)}">${esc(m.path)}</span>`;
+          return `<span title="${esc(m.path)}">${esc(FMT.baseName(m.path) || m.path)}</span><span class="mono">${ltr(FMT.addr(m.base, 16))}</span><span class="num">${esc(FMT.bytes(m.size))}</span><span class="dim start" title="${esc(m.path)}">${ltr(esc(m.path))}</span>`;
         },
         onClick: (k, e) => pathMenu(shown[k].path, e),
         onMenu: (k, e) => pathMenu(shown[k].path, e),
@@ -756,13 +757,13 @@ const DETAIL = (() => {
     let scope = forProc ? 'proc' : 'all', kind = 'all', filter = '', shown = [], sig = '';
     const seg = (role, items, on) => `<div class="seg sm" data-seg="${role}">${items.map(([v, label]) => `<button type="button" data-v="${v}" class="${v === on ? 'on' : ''}">${esc(label)}</button>`).join('')}</div>`;
     if (forProc) {
-      el.appendChild(h(`<div class="stats">${statBox(t('hist.firstSeen'), 'first')}${statBox(t('hist.lifetime'), 'life')}${statBox(t('hist.peakCpu'), 'pc')}${statBox(t('hist.avgCpu'), 'ac')}${statBox(t('hist.peakMem'), 'pm')}</div>`));
+      el.appendChild(h(`<div class="stats wide-first">${statBox(t('hist.firstSeen'), 'first')}${statBox(t('hist.lifetime'), 'life')}${statBox(t('hist.peakCpu'), 'pc')}${statBox(t('hist.avgCpu'), 'ac')}${statBox(t('hist.peakMem'), 'pm')}</div>`));
     }
     el.appendChild(h(`<div class="bar-row">${forProc ? seg('scope', [['proc', t('hist.thisProc')], ['all', t('hist.all')]], scope) : ''}
       ${seg('kind', [['all', t('hist.kindAll')], ['start', t('hist.started')], ['exit', t('hist.exited')]], kind)}
       <input class="input sm" type="search" spellcheck="false" data-a="filter" placeholder="${esc(t('hist.filter'))}" style="flex:1;min-width:120px">
       <span class="note" data-r="count"></span>${forProc ? '' : `<button class="btn" type="button" data-a="clear">${icon('trash')}${esc(t('hist.clear'))}</button>`}</div>`));
-    const list = vlist(el, { cols: '84px 92px minmax(0,1fr) 70px 84px 70px 84px', empty: t('hist.none'),
+    const list = vlist(el, { cols: '100px 86px minmax(0,1fr) 70px 78px 76px 96px', empty: t('hist.none'),
       head: [[t('hist.time')], [t('hist.event')], [t('hist.process')], ['PID', 'num'], [t('hist.lifetime'), 'num'], [t('hist.peakCpu'), 'num'], [t('hist.peakMem'), 'num']] });
     el.appendChild(h(`<div class="note">${esc(t('hist.note'))}</div>`));
     function summary() {
@@ -770,11 +771,14 @@ const DETAIL = (() => {
       const s = APP.hist.series(cur.key);
       const end = cur.exited ? (cur.endT || APP.t) : APP.t;
       const st = s ? stats(s.cpu, s.n) : null;
+      // Süreç sonlandıysa dizisi bırakılmıştır; özet çıkış olayından gelir
+      let ex = null;
+      if (!s) for (let k = APP.events.length - 1; k >= 0 && !ex; k--) { const ev = APP.events[k]; if (ev.type === 'exit' && ev.pid === cur.pid && (!ev.start || !cur.start || Math.abs(ev.start - cur.start) < 2000)) ex = ev; }
       setV(el, 'first', cur.start ? formatDate(cur.start) : '—');
-      setV(el, 'life', cur.start && end ? FMT.duration(end - cur.start, DUR) : '—');
-      setV(el, 'pc', s ? fPct(s.peakCpu) : '—');
-      setV(el, 'ac', st ? fPct(st.avg) : '—');
-      setV(el, 'pm', s ? FMT.bytes(s.peakWs) : '—');
+      setV(el, 'life', cur.start && end ? FMT.duration(end - cur.start, DUR) : ex ? FMT.duration(ex.lifeMs, DUR) : '—');
+      setV(el, 'pc', s ? fPct(s.peakCpu) : ex ? fPct(ex.peakCpu) : '—');
+      setV(el, 'ac', st ? fPct(st.avg) : ex ? fPct(ex.avgCpu) : '—');
+      setV(el, 'pm', s ? FMT.bytes(s.peakWs) : ex ? FMT.bytes(ex.peakWs) : '—');
     }
     function refresh(force) {
       summary();
@@ -834,7 +838,7 @@ const DETAIL = (() => {
     const mem = chartCard(grid, t('sys.mem'), '--m-mem', true);
     const io = chartCard(grid, t('sys.io'), '--m-io', true);
     const gpu = gpuOn ? chartCard(grid, t('sys.gpu'), '--m-gpu', true) : null;
-    const tops = h(`<div class="charts2">${[['cpu', 'sys.topCpu', 'CPU'], ['ws', 'sys.topMem', t('col.mem')]].map(([k, key, col]) => `<div class="vl" style="--vl-cols:minmax(0,1fr) 54px 78px" data-top="${k}">
+    const tops = h(`<div class="charts2">${[['cpu', 'sys.topCpu', 'CPU'], ['ws', 'sys.topMem', t('col.mem')]].map(([k, key, col]) => `<div class="vl" style="--vl-cols:minmax(0,1fr) 70px 78px" data-top="${k}">
       <div class="vl-head"><span>${esc(t(key))}</span><span class="num">PID</span><span class="num">${esc(col)}</span></div><div data-r="rows"></div></div>`).join('')}</div>`);
     el.appendChild(tops);
     const info = h(`<div class="card"><h4>${esc(t('sys.info'))}</h4><div class="cb"><dl class="kv" data-r="kv"></dl></div></div>`);
