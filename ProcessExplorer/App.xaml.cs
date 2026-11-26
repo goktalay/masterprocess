@@ -1,5 +1,4 @@
 using System.Windows;
-using ProcessExplorer.Utils;
 
 namespace ProcessExplorer;
 
