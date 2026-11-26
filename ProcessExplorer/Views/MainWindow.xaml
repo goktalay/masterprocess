@@ -23,32 +23,36 @@
         </Grid.RowDefinitions>
 
         <!-- Top Bar with Metrics -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Background="#3B4252" Padding="12">
-            <TextBlock Text="System CPU:" Foreground="White" Margin="0,0,8,0"/>
-            <TextBlock Text="{Binding SystemCpuUsage, StringFormat='{0:F2}%'}" Foreground="#A3BE8C" Margin="0,0,24,0" FontWeight="Bold"/>
+        <Border Grid.Row="0" Background="#3B4252" Padding="12">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="System CPU:" Foreground="White" Margin="0,0,8,0"/>
+                <TextBlock Text="{Binding SystemCpuUsage, StringFormat='{0:F2}%'}" Foreground="#A3BE8C" Margin="0,0,24,0" FontWeight="Bold"/>
 
-            <TextBlock Text="Total Memory:" Foreground="White" Margin="0,0,8,0"/>
-            <TextBlock x:Name="TotalMemoryDisplay" Foreground="#5E81AC" Margin="0,0,24,0" FontWeight="Bold"/>
+                <TextBlock Text="Total Memory:" Foreground="White" Margin="0,0,8,0"/>
+                <TextBlock x:Name="TotalMemoryDisplay" Foreground="#5E81AC" Margin="0,0,24,0" FontWeight="Bold"/>
 
-            <TextBlock Text="Available:" Foreground="White" Margin="0,0,8,0"/>
-            <TextBlock x:Name="AvailableMemoryDisplay" Foreground="#EBCB8B" FontWeight="Bold"/>
-        </StackPanel>
+                <TextBlock Text="Available:" Foreground="White" Margin="0,0,8,0"/>
+                <TextBlock x:Name="AvailableMemoryDisplay" Foreground="#EBCB8B" FontWeight="Bold"/>
+            </StackPanel>
+        </Border>
 
         <!-- Control Buttons -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Background="#3B4252" Padding="12">
-            <Button Command="{Binding StartMonitoringCommand}"
-                    Content="Start Monitoring"
-                    Padding="12,8" Margin="0,0,8,0"
-                    Background="#A3BE8C"/>
-            <Button Command="{Binding StopMonitoringCommand}"
-                    Content="Stop Monitoring"
-                    Padding="12,8" Margin="0,0,8,0"
-                    Background="#BF616A"/>
-            <Button Command="{Binding RefreshProcessListCommand}"
-                    Content="Refresh"
-                    Padding="12,8"
-                    Background="#5E81AC"/>
-        </StackPanel>
+        <Border Grid.Row="1" Background="#3B4252" Padding="12">
+            <StackPanel Orientation="Horizontal">
+                <Button Command="{Binding StartMonitoringCommand}"
+                        Content="Start Monitoring"
+                        Padding="12,8" Margin="0,0,8,0"
+                        Background="#A3BE8C"/>
+                <Button Command="{Binding StopMonitoringCommand}"
+                        Content="Stop Monitoring"
+                        Padding="12,8" Margin="0,0,8,0"
+                        Background="#BF616A"/>
+                <Button Command="{Binding RefreshProcessListCommand}"
+                        Content="Refresh"
+                        Padding="12,8"
+                        Background="#5E81AC"/>
+            </StackPanel>
+        </Border>
 
         <!-- Main Content Area -->
         <Grid Grid.Row="2">
@@ -81,33 +85,35 @@
             </DataGrid>
 
             <!-- Details Panel -->
-            <StackPanel Grid.Column="1" Background="#3B4252" Padding="12" Margin="4,0,0,0">
-                <TextBlock Text="Process Details" FontSize="14" FontWeight="Bold" Foreground="#5E81AC" Margin="0,0,0,12"/>
+            <Border Grid.Column="1" Background="#3B4252" Padding="12" Margin="4,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="Process Details" FontSize="14" FontWeight="Bold" Foreground="#5E81AC" Margin="0,0,0,12"/>
 
-                <TextBlock Text="Name:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.Name}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
+                    <TextBlock Text="Name:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.Name}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
 
-                <TextBlock Text="PID:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.ProcessId}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
+                    <TextBlock Text="PID:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.ProcessId}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
 
-                <TextBlock Text="Memory:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.MemoryFormatted}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
+                    <TextBlock Text="Memory:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.MemoryFormatted}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
 
-                <TextBlock Text="CPU Usage:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.CpuUsageFormatted}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
+                    <TextBlock Text="CPU Usage:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.CpuUsageFormatted}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
 
-                <TextBlock Text="GPU Memory:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.GpuMemoryFormatted}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
+                    <TextBlock Text="GPU Memory:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.GpuMemoryFormatted}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
 
-                <TextBlock Text="Threads:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.ThreadCount}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
+                    <TextBlock Text="Threads:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.ThreadCount}" Foreground="#A3BE8C" Margin="0,0,0,8"/>
 
-                <TextBlock Text="Window:" Foreground="#D8DEE9"/>
-                <TextBlock Text="{Binding SelectedProcess.WindowTitle}" Foreground="#A3BE8C" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                    <TextBlock Text="Window:" Foreground="#D8DEE9"/>
+                    <TextBlock Text="{Binding SelectedProcess.WindowTitle}" Foreground="#A3BE8C" Margin="0,0,0,8" TextWrapping="Wrap"/>
 
-                <TextBlock Text="Path:" Foreground="#D8DEE9" Margin="0,8,0,0"/>
-                <TextBlock Text="{Binding SelectedProcess.Path}" Foreground="#A3BE8C" TextWrapping="Wrap" FontSize="10"/>
-            </StackPanel>
+                    <TextBlock Text="Path:" Foreground="#D8DEE9" Margin="0,8,0,0"/>
+                    <TextBlock Text="{Binding SelectedProcess.Path}" Foreground="#A3BE8C" TextWrapping="Wrap" FontSize="10"/>
+                </StackPanel>
+            </Border>
         </Grid>
 
         <!-- Status Bar -->
