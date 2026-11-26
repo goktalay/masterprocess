@@ -78,7 +78,7 @@ internal static unsafe class SelfTest
 
     private static bool Near(double a, double b, double relTol, double absTol) => Math.Abs(a - b) <= Math.Max(absTol, Math.Max(Math.Abs(a), Math.Abs(b)) * relTol);
 
-    private static string J(string s) => JsonEncodedText.Encode(s, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString();
+    private static string J(string s) => "\"" + JsonEncodedText.Encode(s, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString() + "\"";
 
     public static int Run()
     {
@@ -294,11 +294,18 @@ internal static unsafe class SelfTest
             Check(counts.TryGetProperty("File", out var fc) && fc.GetInt32() > 0, "counts.File");
             Check(counts.TryGetProperty("Event", out _) || counts.TryGetProperty("Thread", out _) || counts.TryGetProperty("Key", out _), "well-known type names");
             bool found = false;
-            int nf = 0;
+            int nf = 0, dirs = 0;
             foreach (var f in r.Data.GetProperty("files").EnumerateArray())
             {
                 nf++;
                 Check(f.GetProperty("kind").GetString() is "file" or "dir", "kind");
+                if (f.GetProperty("kind").GetString() == "dir")
+                {
+                    dirs++;
+                    Check(f.GetProperty("size").GetInt64() == 0, "dir size must be 0");
+                    Check(Directory.Exists(f.GetProperty("path").GetString()!), $"'{f.GetProperty("path").GetString()}' reported as dir but is not a directory");
+                }
+                else Check(!Directory.Exists(f.GetProperty("path").GetString()!), $"'{f.GetProperty("path").GetString()}' reported as file but is a directory");
                 if (string.Equals(f.GetProperty("path").GetString(), exe, StringComparison.OrdinalIgnoreCase))
                 {
                     found = true;
@@ -306,8 +313,9 @@ internal static unsafe class SelfTest
                 }
             }
             Check(found, "own open file listed in files");
+            Check(dirs > 0, "no directory handle reported as kind 'dir' (current directory is always open)");
             Check(ms < 7000, "time budget");
-            return $"types={types} total={total} files={nf} ms={ms} unknown={(counts.TryGetProperty("Unknown", out var u) ? u.GetInt32() : 0)}";
+            return $"types={types} total={total} files={nf} dirs={dirs} ms={ms} unknown={(counts.TryGetProperty("Unknown", out var u) ? u.GetInt32() : 0)}";
         });
 
         Test("filemap", () =>

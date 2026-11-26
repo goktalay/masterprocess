@@ -78,6 +78,7 @@ internal static unsafe class Native
     [DllImport(K32, SetLastError = true)] public static extern uint GetFinalPathNameByHandleW(IntPtr h, char* buf, uint size, uint flags);
     [DllImport(K32, SetLastError = true)] public static extern int GetFileSizeEx(IntPtr h, long* size);
     [DllImport(K32, SetLastError = true)] public static extern int GetFileInformationByHandle(IntPtr h, BY_HANDLE_FILE_INFORMATION* info);
+    [DllImport(K32, SetLastError = true)] public static extern int GetFileInformationByHandleEx(IntPtr h, int cls, void* buf, uint size);
     [DllImport(K32, SetLastError = true)] public static extern IntPtr CreateFileW(char* path, uint access, uint share, void* sa, uint disposition, uint flags, IntPtr template);
     [DllImport(K32, SetLastError = true)] public static extern int DeviceIoControl(IntPtr h, uint code, void* inBuf, uint inSize, void* outBuf, uint outSize, uint* returned, void* overlapped);
     [DllImport(K32, SetLastError = true)] public static extern int GetVolumePathNameW(char* path, char* volume, uint size);

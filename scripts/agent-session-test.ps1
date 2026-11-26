@@ -66,6 +66,13 @@ function Call([string]$body, [string]$label, [switch]$Quiet) {
     return $o
 }
 
+function OsPriority([int]$id) {
+    $map = @{ Idle = 'idle'; BelowNormal = 'below'; Normal = 'normal'; AboveNormal = 'above'; High = 'high'; RealTime = 'realtime' }
+    $p = Get-Process -Id $id
+    $p.Refresh()
+    return $map[[string]$p.PriorityClass]
+}
+
 function ExpectOk($o, [string]$label) {
     if (-not $o.ok) { Fail "${label}: expected ok, got err=$($o.err) msg=$($o.msg)"; return $false }
     return $true
@@ -233,7 +240,9 @@ try {
             Assert ($d.cmdline -is [string] -and $d.cmdline.Length -gt 0) 'cmdline empty'
             Assert ($d.user -is [string] -and $d.user.Length -gt 0) 'user empty'
             Assert ($d.arch -eq 'x64') "arch = $($d.arch)"
-            Assert ($d.priority -eq 'normal') "priority = $($d.priority)"
+            # CI koşucusu işleri BelowNormal ile başlatır ve çocuk süreçler bunu miras alır: beklenen değer işletim sisteminden okunur
+            $osPrio = OsPriority $tpid
+            Assert ($d.priority -eq $osPrio) "priority = $($d.priority), OS reports $osPrio"
             Assert ($d.suspended -eq $false) 'suspended should be false'
             if ($script:Target.Direct) { Assert ($d.ppid -eq $PID) "ppid $($d.ppid) != script pid $PID" }
             Assert ($d.start -gt 1500000000000) 'start'
@@ -339,6 +348,14 @@ try {
                 Assert ($hit.path -ieq $script:HeldFile) "path '$($hit.path)' != '$($script:HeldFile)'"
                 Write-Host ("EXTRACT handles(holder) hit " + (ToJson $hit))
             }
+            $dirs = @(@($h.data.files) | Where-Object { $_.kind -eq 'dir' })
+            Assert ($dirs.Count -gt 0) "no directory handle is reported as kind 'dir' (the current directory is always open)"
+            foreach ($f in @($h.data.files)) {
+                $isDir = Test-Path -LiteralPath $f.path -PathType Container
+                if ($f.kind -eq 'dir') { Assert ($isDir) "'$($f.path)' is reported as dir but is not a directory"; Assert ($f.size -eq 0) "dir size = $($f.size)" }
+                elseif ($isDir) { Fail "'$($f.path)' is a directory but is reported as file" }
+            }
+            Write-Host ("EXTRACT handles(holder) dirs=" + (ToJson @($dirs | Select-Object -First 2)))
             Write-Host ("EXTRACT handles(holder) counts=" + (ToJson $h.data.counts) + " files=" + @($h.data.files).Count + " first3=" + (ToJson @(@($h.data.files) | Select-Object -First 3)))
         }
     }
@@ -430,15 +447,15 @@ try {
 
     # ------------------------------------------------------------ priority
     Step 'priority' {
-        $r = Call ('"cmd":"priority","pid":{0},"value":"below"' -f $tpid) 'priority(below)'
-        if (ExpectOk $r 'priority(below)') { Assert ($r.data.done -eq $true) 'done' }
-        $d = Call ('"cmd":"detail","pid":{0}' -f $tpid) 'detail(after below)' -Quiet
-        Assert ($d.ok -and $d.data.priority -eq 'below') "priority after 'below' = $($d.data.priority)"
-        Assert ((Get-Process -Id $tpid).PriorityClass -eq 'BelowNormal') 'OS does not report BelowNormal'
-        $r = Call ('"cmd":"priority","pid":{0},"value":"normal"' -f $tpid) 'priority(normal)'
-        if (ExpectOk $r 'priority(normal)') { Assert ($r.data.done -eq $true) 'done' }
-        $d = Call ('"cmd":"detail","pid":{0}' -f $tpid) 'detail(after normal)' -Quiet
-        Assert ($d.ok -and $d.data.priority -eq 'normal') "priority after 'normal' = $($d.data.priority)"
+        Write-Host ("initial priority (OS): " + (OsPriority $tpid))
+        foreach ($v in @('high', 'below', 'normal')) {
+            $r = Call ('"cmd":"priority","pid":{0},"value":"{1}"' -f $tpid, $v) "priority($v)"
+            if (ExpectOk $r "priority($v)") { Assert ($r.data.done -eq $true) 'done' }
+            $d = Call ('"cmd":"detail","pid":{0}' -f $tpid) "detail(after $v)" -Quiet
+            Assert ($d.ok -and $d.data.priority -eq $v) "detail.priority after '$v' = $($d.data.priority)"
+            Assert ((OsPriority $tpid) -eq $v) "OS reports $(OsPriority $tpid) after '$v'"
+            Write-Host "EXTRACT priority set=$v detail=$($d.data.priority) os=$(OsPriority $tpid)"
+        }
         ExpectErr (Call ('"cmd":"priority","pid":{0},"value":"realtime"' -f $tpid) 'priority(realtime)') 'bad_request' 'priority(realtime)'
         ExpectErr (Call ('"cmd":"priority","pid":{0},"value":"turbo"' -f $tpid) 'priority(unknown value)') 'bad_request' 'priority(unknown value)'
     }

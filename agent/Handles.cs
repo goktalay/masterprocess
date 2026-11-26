@@ -96,16 +96,23 @@ internal static unsafe class Handles
         if (path.StartsWith("\\\\?\\UNC\\", StringComparison.Ordinal)) path = "\\\\" + path.Substring(8);
         else if (path.StartsWith("\\\\?\\", StringComparison.Ordinal)) path = path.Substring(4);
 
-        Native.BY_HANDLE_FILE_INFORMATION info;
-        if (Native.GetFileInformationByHandle(h, &info) != 0)
+        // FILE_STANDARD_INFO: erişim hakkı gerektirmez (çalışma dizini gibi yalnız TRAVERSE ile açılmış tanıtıcılarda da çalışır).
+        // { long AllocationSize; long EndOfFile; uint NumberOfLinks; byte DeletePending; byte Directory; }
+        byte* std = stackalloc byte[24];
+        new Span<byte>(std, 24).Clear();
+        if (Native.GetFileInformationByHandleEx(h, 1 /* FileStandardInfo */, std, 24) != 0)
         {
-            job.IsDir = (info.dwFileAttributes & 0x10) != 0;
-            job.Size = job.IsDir ? 0 : (long)(((ulong)info.nFileSizeHigh << 32) | info.nFileSizeLow);
+            job.IsDir = std[21] != 0;
+            job.Size = job.IsDir ? 0 : *(long*)(std + 8);
         }
         else
         {
-            long size = 0;
-            if (Native.GetFileSizeEx(h, &size) != 0) job.Size = size;
+            Native.BY_HANDLE_FILE_INFORMATION info;
+            if (Native.GetFileInformationByHandle(h, &info) != 0)
+            {
+                job.IsDir = (info.dwFileAttributes & 0x10) != 0;
+                job.Size = job.IsDir ? 0 : (long)(((ulong)info.nFileSizeHigh << 32) | info.nFileSizeLow);
+            }
         }
         job.Path = Proto.Clean(path);
     }
