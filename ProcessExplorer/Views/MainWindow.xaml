@@ -26,7 +26,7 @@
         <Border Grid.Row="0" Background="#3B4252" Padding="12">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="System CPU:" Foreground="White" Margin="0,0,8,0"/>
-                <TextBlock Text="{Binding SystemCpuUsage, StringFormat='{0:F2}%'}" Foreground="#A3BE8C" Margin="0,0,24,0" FontWeight="Bold"/>
+                <TextBlock Text="{Binding SystemCpuUsage, StringFormat=0.00}" Foreground="#A3BE8C" Margin="0,0,24,0" FontWeight="Bold"/>
 
                 <TextBlock Text="Total Memory:" Foreground="White" Margin="0,0,8,0"/>
                 <TextBlock x:Name="TotalMemoryDisplay" Foreground="#5E81AC" Margin="0,0,24,0" FontWeight="Bold"/>
