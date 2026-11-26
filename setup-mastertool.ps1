@@ -88,8 +88,10 @@ function Build-ProcessExplorer {
 
     # Try to find InnoSetup Compiler
     $ISCCPaths = @(
-        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-        "C:\Program Files\Inno Setup 6\ISCC.exe"
+        "C:\Program Files\Inno Setup 7\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe",
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
     )
 
     $ISCC = $ISCCPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
