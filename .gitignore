@@ -1,0 +1,30 @@
+# Build results
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+.vs/
+*.sln.user
+*.user
+
+# NuGet
+*.nupkg
+packages/
+.nuget/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
