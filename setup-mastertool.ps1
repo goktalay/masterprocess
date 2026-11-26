@@ -71,6 +71,9 @@ function Build-ProcessExplorer {
         Write-Error-Custom "ProcessExplorer.sln bulunamadi. Proje dizininde calis."
     }
 
+    Write-Host "Build cache temizleniyor..." -ForegroundColor $Cyan
+    & dotnet clean -c Release 2>&1 | Out-Null
+
     Write-Host "Release build yapiliyor..." -ForegroundColor $Cyan
     & dotnet build -c Release 2>&1
 
