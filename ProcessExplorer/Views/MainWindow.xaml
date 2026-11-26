@@ -80,7 +80,7 @@
                     <DataGridTextColumn Header="Memory" Binding="{Binding MemoryFormatted}" Width="100"/>
                     <DataGridTextColumn Header="CPU %" Binding="{Binding CpuUsageFormatted}" Width="80"/>
                     <DataGridTextColumn Header="Threads" Binding="{Binding ThreadCount}" Width="70"/>
-                    <DataGridTextColumn Header="Start Time" Binding="{Binding StartTime, StringFormat='{0:HH:mm:ss}'}" Width="100"/>
+                    <DataGridTextColumn Header="Start Time" Binding="{Binding StartTime}" Width="100"/>
                 </DataGrid.Columns>
             </DataGrid>
 
