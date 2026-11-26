@@ -1,0 +1,64 @@
+{
+  "name": "master-process",
+  "productName": "Master Process",
+  "version": "2.0.0",
+  "description": "Windows için süreç yöneticisi: süreç ağacı, süreç başına CPU / RAM / G/Ç / GPU grafikleri, bellek ve disk yerleşim haritaları, pencere görüntüsü, açık dosyalar, hex görüntüleyici ve tarihçe",
+  "main": "src/main.js",
+  "author": "Mastertool",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "icon": "node scripts/make-icon.js",
+    "e2e": "node scripts/e2e-electron.js",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "^2.1.2"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "playwright-core": "^1.64.1",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.33.5"
+  },
+  "build": {
+    "appId": "com.mastertool.masterprocess",
+    "productName": "Master Process",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "build/icon.svg",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "agent-out", "to": "agent", "filter": ["mp-agent.exe"] }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "artifactName": "Master-Process-Setup-${version}.exe",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Master Process",
+      "include": "build/installer.nsh",
+      "menuCategory": "Master Tool"
+    },
+    "portable": {
+      "artifactName": "Master-Process-Portable-${version}.exe"
+    }
+  }
+}
