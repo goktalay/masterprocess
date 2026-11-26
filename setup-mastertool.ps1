@@ -75,7 +75,14 @@ function Build-ProcessExplorer {
     & dotnet clean -c Release 2>&1 | Out-Null
 
     # Remove output directories completely
-    Remove-Item -Recurse -Force "ProcessExplorer/bin", "ProcessExplorer/obj" -ErrorAction SilentlyContinue
+    if (Test-Path "ProcessExplorer\bin") {
+        Write-Host "ProcessExplorer\bin siliniyor..." -ForegroundColor $Cyan
+        Remove-Item -Recurse -Force "ProcessExplorer\bin"
+    }
+    if (Test-Path "ProcessExplorer\obj") {
+        Write-Host "ProcessExplorer\obj siliniyor..." -ForegroundColor $Cyan
+        Remove-Item -Recurse -Force "ProcessExplorer\obj"
+    }
 
     Write-Host "Release build yapiliyor..." -ForegroundColor $Cyan
     & dotnet build -c Release 2>&1
