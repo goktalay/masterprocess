@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>Master Process</title>
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="mastertool.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <img src="../../build/icon.png" alt="">
+        <div>
+          <div class="brand-name">Master Process</div>
+          <div class="brand-sub" id="stats"></div>
+        </div>
+      </div>
+      <div class="sys" id="sys"></div>
+      <div class="search" id="searchBox">
+        <span class="s-ico"></span>
+        <input id="search" type="text" spellcheck="false" autocomplete="off">
+        <button class="s-clear" id="searchClear" type="button" tabindex="-1"></button>
+      </div>
+      <div class="actions" id="actions">
+        <div class="seg" id="viewMode"></div>
+        <button class="icon-btn" id="btnPause" type="button"></button>
+        <button class="btn ghost" id="btnSettings" type="button"></button>
+        <button class="account-chip" id="btnAccount" type="button"><span class="ac-avatar"></span><span class="ac-sync"></span></button>
+      </div>
+    </header>
+
+    <div class="update-bar hidden" id="updateBar"></div>
+    <div class="update-bar mon hidden" id="monBar"></div>
+
+    <div class="main">
+      <section class="pane procs" id="procs">
+        <div class="pt-head" id="ptHead"></div>
+        <div class="pt-body" id="ptBody" tabindex="0">
+          <div class="pt-spacer" id="ptSpacer"></div>
+          <div class="pt-rows" id="ptRows"></div>
+          <div class="pt-empty hidden" id="ptEmpty"></div>
+        </div>
+        <div class="pt-foot" id="ptFoot"></div>
+      </section>
+      <section class="pane detail" id="detail"></section>
+    </div>
+  </div>
+
+  <script src="../i18n.js"></script>
+  <script src="../tree.js"></script>
+  <script src="../history.js"></script>
+  <script src="ui.js"></script>
+  <script src="mastertool.js"></script>
+  <script src="fmt.js"></script>
+  <script src="charts.js"></script>
+  <script src="hex.js"></script>
+  <script src="detail.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
