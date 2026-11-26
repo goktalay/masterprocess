@@ -72,10 +72,15 @@ function Build-ProcessExplorer {
     }
 
     Write-Host "Release build yapiliyor..." -ForegroundColor $Cyan
-    & dotnet build -c Release 2>&1 | Select-String "error|success" -ErrorAction SilentlyContinue
+    & dotnet build -c Release 2>&1
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error-Custom "Build basarisiz. .NET 8.0 SDK yuklu mu?"
+    }
+
+    # Verify output exists
+    if (-not (Test-Path "bin/Release/net8.0-windows/ProcessExplorer.exe")) {
+        Write-Error-Custom "Build output bulunamadi: bin/Release/net8.0-windows/ProcessExplorer.exe"
     }
     Write-Success "Build tamamlandi"
 
