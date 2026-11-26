@@ -1,5 +1,6 @@
 ; Process Explorer - Installer Script
 ; InnoSetup 6.0+ required
+; Auto-build trigger
 
 #define MyAppName "Process Explorer"
 #define MyAppVersion "1.0.0"
