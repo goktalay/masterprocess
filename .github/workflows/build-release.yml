@@ -42,11 +42,31 @@ jobs:
           path: ProcessExplorer/bin/Release/net8.0-windows/
           retention-days: 30
 
-      - name: List output
+      - name: Upload to mastertool.download
+        if: secrets.PROCESSEXPLORER_RELEASE_KEY != ''
+        env:
+          RELEASE_KEY: ${{ secrets.PROCESSEXPLORER_RELEASE_KEY }}
         run: |
-          Write-Host "=== Build Output ===" -ForegroundColor Green
-          if (Test-Path "ProcessExplorer\bin\Release\net8.0-windows\") {
-            Get-ChildItem "ProcessExplorer\bin\Release\net8.0-windows\" -File | ForEach-Object {
-              Write-Host "$($_.Name) - $([math]::Round($_.Length/1MB, 2)) MB"
+          $exe = "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe"
+          if (Test-Path $exe) {
+            Write-Host "✓ Found: $exe" -ForegroundColor Green
+            $size = [math]::Round((Get-Item $exe).Length/1MB, 2)
+            Write-Host "Size: $size MB" -ForegroundColor Cyan
+
+            try {
+              $response = Invoke-WebRequest `
+                -Uri "https://mastertool.download/api/pe/releases/upload" `
+                -Method POST `
+                -Headers @{"X-Release-Key" = $env:RELEASE_KEY} `
+                -Form @{file = Get-Item $exe} `
+                -StatusCodeVariable "statusCode"
+
+              Write-Host "✓ Upload successful! Status: $statusCode" -ForegroundColor Green
+            } catch {
+              Write-Host "✗ Upload error: $($_.Exception.Message)" -ForegroundColor Red
+              Write-Host "Response: $($_.Exception.Response.StatusCode)" -ForegroundColor Yellow
             }
+          } else {
+            Write-Host "✗ File not found: $exe" -ForegroundColor Red
+            exit 1
           }
