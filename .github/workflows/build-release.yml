@@ -1,0 +1,43 @@
+name: Build Process Explorer Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ProcessExplorer/**'
+      - 'setup.iss'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Clean
+        run: dotnet clean -c Release
+
+      - name: Build
+        run: dotnet build -c Release
+
+      - name: Verify binary
+        run: |
+          if (-not (Test-Path "ProcessExplorer\bin\Release\net8.0-windows\ProcessExplorer.exe")) {
+            Write-Error "Binary not found!"
+            exit 1
+          }
+          Write-Host "✓ Binary created successfully"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProcessExplorer-Release
+          path: ProcessExplorer/bin/Release/net8.0-windows/
+          retention-days: 30
