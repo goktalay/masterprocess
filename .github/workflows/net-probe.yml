@@ -43,16 +43,6 @@ jobs:
           try { ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label B-firewall-rule; $code = $LASTEXITCODE }
           finally { netsh advfirewall firewall delete rule name="mp-agent-probe" }
           exit $code
-      - name: Ağ sınaması B2 (kural, ikinci koşu)
-        if: always()
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $exe = (Resolve-Path agent-out\mp-agent.exe).Path
-          netsh advfirewall firewall add rule name="mp-agent-probe" dir=in action=allow program="$exe" enable=yes
-          try { ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label B2-firewall-rule; $code = $LASTEXITCODE }
-          finally { netsh advfirewall firewall delete rule name="mp-agent-probe" }
-          exit $code
       - name: Ağ sınaması C (güvenlik duvarı kapalı, bilgi amaçlı)
         if: always()
         continue-on-error: true

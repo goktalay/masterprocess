@@ -85,10 +85,13 @@ internal static unsafe partial class Net
         var seen = new HashSet<(uint, byte)>();
         bool denied = false;
         int candidates = 0;
+        // İkinci geçiş: yönlendirilebilir IPv6 adresi olmayan arayüzlerde bağlantı-yerel (fe80::/10) adres kullanılır.
+        for (int pass = 0; pass < 2; pass++)
         foreach (var a in addrs)
         {
             if (a.V == 4 && (a.A0 & 0xFFFF) == 0xFEA9) continue; // 169.254.x.x
-            if (a.V == 6 && (a.A0 & 0xC0FF) == 0x80FE) continue; // fe80::/10
+            bool linkLocal = a.V == 6 && (a.A0 & 0xC0FF) == 0x80FE; // fe80::/10
+            if (linkLocal != (pass == 1) || (linkLocal && a.Scope == 0)) continue;
             candidates++;
             if (!seen.Add((a.IfIndex, a.V))) continue; // arayüz ve adres ailesi başına tek soket
             var sk = Open(a, out int err, out string step);
