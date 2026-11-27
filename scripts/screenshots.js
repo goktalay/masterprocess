@@ -22,7 +22,7 @@ const W = 1600, HGT = 1000;
 const TEXT = {
   tr: {
     'surec-agaci': ['Süreç ağacı ve sistem görünümü', 'Üst–alt ilişkisiyle süreçler, satır içi CPU / bellek / G/Ç / ağ grafikleri ve sistem özeti'],
-    'agac-sirali': ['Ağaçta dal yüküne göre sıralama', 'Sütun başlığına tıklanınca kökler ve kardeşler, alt süreçleriyle birlikte toplam yüke göre sıralanır; tümünü aç / tümünü kapat düğmeleri'],
+    'agac-sirali': ['Ağaçta dal yüküne göre sıralama', 'Sütun başlığına tıklanınca kökler ve kardeşler dal toplamına göre sıralanır; tümünü aç / tümünü kapat düğmeleri'],
     genel: ['Süreç ayrıntıları', 'Yol, komut satırı, üst süreç, öncelik, sayaçlar ve süreç eylemleri'],
     performans: ['Süreç başına performans grafikleri', 'CPU, bellek ve G/Ç için canlı çizgi grafikler; tepe ve ortalama değerler'],
     bellek: ['Bellek yerleşim haritası', 'Sanal adres alanındaki bölgeler: tür, koruma ve fiziksel bellekte bulunma oranı'],
@@ -31,7 +31,7 @@ const TEXT = {
     'disk-yerlesim': ['Dosyanın diskteki yerleşimi', 'Seçilen dosyanın birimdeki kümeleri, parça sayısı ve içeriğinin hex dökümü'],
     'disk-yuzey': ['Disk yüzeyi ve dosya parçaları', 'Birimin doluluk haritası üzerinde dosyanın kapladığı kümeler; her parçanın başlangıç kümesi, sektörü ve boyutu'],
     ag: ['Ağ: bağlantılar ve portlar', 'Sürecin indirme / yükleme hızı, açık bağlantıları ve dinlediği portlar; porta göre süzme'],
-    'ag-akilli': ['Ağ: akıllı görünüm', 'Giden ve gelen veri ayrı panellerde; HTTP iletileri ayrıştırılır, JSON sözdizimi renklendirilir, sıkıştırılmış gövdeler açılır'],
+    'ag-akilli': ['Ağ: akıllı görünüm', 'Giden ve gelen veri ayrı panellerde; HTTP ayrıştırılır, JSON sözdizimi renklendirilir, sıkıştırılmış gövdeler açılır'],
     'ag-resim': ['Ağ: resim önizleme', 'Gönderilen ya da alınan resimler akışın içinde önizlenir; tür, boyut ve çözünürlük bilgisiyle'],
     'ag-hex': ['Ağ: hex dökümü', 'Aynı baytlar hex, düz metin, HTML / XML kaynağı ya da Base64 olarak; duraklatma ve temizleme'],
     gpu: ['GPU kullanımı', 'Süreç başına GPU motoru kullanımı ve ayrılmış / paylaşılan GPU belleği'],

@@ -264,7 +264,8 @@ let cleanup = async () => {};
         await shot('e2e-13-ag-hex');
         await fmt('text', 'out', /GET \/sayfa\.html HTTP\/1\.1/, 'düz metin (giden istek satırı okunuyor)');
         await fmt('html', 'in', /class="baslik"/, 'HTML / XML kaynağı (gelen sayfa)');
-        await fmt('base64', 'out', /[A-Za-z0-9+/]{120}/, 'Base64 (giden)');
+        // Base64 dökümü 76 karakterde satır kırar
+        await fmt('base64', 'out', /[A-Za-z0-9+/]{64}/, 'Base64 (giden)');
         await main.click('.d-body .nt-stream [data-f="smart"]');
         // Temizle: iki panel de boşalır, sonraki turda yeniden dolar
         await main.click('.d-body .nt-stream [data-a="pause"]');
