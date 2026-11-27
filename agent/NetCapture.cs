@@ -179,7 +179,7 @@ internal static unsafe partial class Net
         }
         if (watched)
         {
-            long t = Proto.NowMs();
+            long t = Clock();
             if (f.LostIn) Push(new Chunk { T = t, Pid = pid, Fl = f, In = true, F = F_GAP });
             if (f.LostOut) Push(new Chunk { T = t, Pid = pid, Fl = f, In = false, F = F_GAP });
         }
@@ -242,7 +242,7 @@ internal static unsafe partial class Net
 
     private static void Emit(Flow f, bool inbound, ReadOnlySpan<byte> data, int flags)
     {
-        long t = Proto.NowMs();
+        long t = Clock();
         int off = 0;
         do
         {
