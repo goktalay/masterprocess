@@ -47,7 +47,8 @@ post_parts() { # post_parts <url> <dosya> <dosya adı> [ek -F argümanları...]
 # --- Kurulum ------------------------------------------------------------------
 SIZE=$(stat -c %s "$SETUP")
 echo "Kurulum: $SETUP ($SIZE bayt), sürüm $VERSION"
-HTTP=$(post_parts "$API/$VERSION/setup" "$SETUP" "$(basename "$SETUP")" -F "notes=$NOTES")
+# --form-string: -F notlardaki ";" işaretini alan parametresi sayıp metni orada keser
+HTTP=$(post_parts "$API/$VERSION/setup" "$SETUP" "$(basename "$SETUP")" --form-string "notes=$NOTES")
 case "$HTTP" in
   200|201) echo "mastertool.download: kurulum $VERSION yüklendi." ;;
   409) echo "::notice::mastertool.download'da $VERSION kurulumu zaten var (409); atlandı." ;;
