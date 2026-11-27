@@ -229,4 +229,35 @@ internal static unsafe class Native
         public uint dwOSVersionInfoSize, dwMajorVersion, dwMinorVersion, dwBuildNumber, dwPlatformId;
         public fixed char szCSDVersion[128];
     }
+
+    // ---- ağ: winsock (ham soket) + IP yardımcı tabloları ----
+    private const string Ws2 = "ws2_32.dll";
+    private const string Iphlp = "iphlpapi.dll";
+
+    public const int AF_INET = 2;
+    public const int AF_INET6 = 23;
+    public const int SOCK_RAW = 3;
+    public const int IPPROTO_IP = 0;
+    public const int IPPROTO_IPV6 = 41;
+    public const int SOL_SOCKET = 0xFFFF;
+    public const int SO_RCVBUF = 0x1002;
+    public const uint SIO_RCVALL = 0x98000001;
+    public const int WSAEACCES = 10013;
+    public static readonly nuint INVALID_SOCKET = unchecked((nuint)(nint)(-1));
+
+    [DllImport(Ws2, SetLastError = true)] public static extern int WSAStartup(ushort version, byte* wsaData);
+    [DllImport(Ws2, SetLastError = true)] public static extern nuint socket(int af, int type, int protocol);
+    [DllImport(Ws2, SetLastError = true)] public static extern int bind(nuint s, byte* name, int nameLen);
+    [DllImport(Ws2, SetLastError = true)] public static extern int WSAIoctl(nuint s, uint code, void* inBuf, uint inLen, void* outBuf, uint outLen, uint* returned, void* overlapped, void* completion);
+    [DllImport(Ws2, SetLastError = true)] public static extern int recv(nuint s, byte* buf, int len, int flags);
+    [DllImport(Ws2, SetLastError = true)] public static extern int setsockopt(nuint s, int level, int name, byte* value, int len);
+    [DllImport(Ws2, SetLastError = true)] public static extern int closesocket(nuint s);
+
+    /// <summary>TCP_TABLE_OWNER_PID_ALL = 5. Dönüş: 0 = tamam, 122 = tampon küçük.</summary>
+    [DllImport(Iphlp)] public static extern uint GetExtendedTcpTable(void* table, uint* size, int order, uint af, int tableClass, uint reserved);
+    /// <summary>UDP_TABLE_OWNER_PID = 1.</summary>
+    [DllImport(Iphlp)] public static extern uint GetExtendedUdpTable(void* table, uint* size, int order, uint af, int tableClass, uint reserved);
+    [DllImport(Iphlp)] public static extern uint GetIfTable2(void** table);
+    [DllImport(Iphlp)] public static extern uint GetUnicastIpAddressTable(ushort family, void** table);
+    [DllImport(Iphlp)] public static extern void FreeMibTable(void* table);
 }

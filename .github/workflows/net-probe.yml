@@ -1,0 +1,24 @@
+name: net-probe
+# Geçici: ağ yakalamanın Windows'ta nasıl davrandığını ölçer. Ana dala taşınmaz.
+on:
+  push:
+    branches: [net-probe]
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Yardımcıyı derle
+        run: dotnet publish agent/MasterProcess.Agent.csproj -c Release -r win-x64 -o agent-out
+      - name: Sürüm
+        run: agent-out\mp-agent.exe --version
+      - name: Kendi kendini sınama
+        run: agent-out\mp-agent.exe --selftest
+      - name: Ağ tanılama
+        if: always()
+        continue-on-error: true
+        run: agent-out\mp-agent.exe --netdiag

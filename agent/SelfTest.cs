@@ -104,6 +104,7 @@ internal static unsafe class SelfTest
             Check(d.GetProperty("elevated").ValueKind is JsonValueKind.True or JsonValueKind.False, "elevated");
             Check(d.GetProperty("debugPrivilege").ValueKind is JsonValueKind.True or JsonValueKind.False, "debugPrivilege");
             gpuCounters = d.GetProperty("gpuCounters").GetBoolean();
+            Check(d.GetProperty("net").GetBoolean(), "net");
             int gpus = d.GetProperty("gpus").GetArrayLength();
             foreach (var g in d.GetProperty("gpus").EnumerateArray())
             {
@@ -448,6 +449,99 @@ internal static unsafe class SelfTest
                 Check(sys.Data.GetProperty("name").GetString() == "System", "pid 4 name");
             }
             return "bad_request / gone paths ok, pid 4 detail ok";
+        });
+
+        Test("net", () =>
+        {
+            // Ağ trafiği üretmeden: komutların biçimi, hata yolları ve yakalamanın açılıp kapanması
+            using (var st = CallOk("{\"cmd\":\"netcap\"}"))
+            {
+                Check(!st.Data.GetProperty("capture").GetBoolean(), "capture is off at start");
+                Check(st.Data.GetProperty("reason").GetString() == "off", "reason off");
+                Check(st.Data.GetProperty("ifaces").GetArrayLength() == 0, "no sockets while off");
+            }
+            ExpectErr("{\"cmd\":\"netcap\",\"on\":\"x\"}", "bad_request");
+            ExpectErr("{\"cmd\":\"netconns\"}", "bad_request");
+            ExpectErr("{\"cmd\":\"netwatch\"}", "bad_request");
+            ExpectErr("{\"cmd\":\"netwatch\",\"pids\":[\"x\"]}", "bad_request");
+            ExpectErr("{\"cmd\":\"netstream\",\"since\":-1}", "bad_request");
+
+            var ifs = NetTables.Interfaces();
+            Check(ifs.Count >= 1, "interface table is not empty");
+            int counted = 0;
+            foreach (var r in ifs) if (NetTables.Counted(r)) counted++;
+
+            int all;
+            using (var c = CallOk("{\"cmd\":\"netconns\",\"all\":true}"))
+            {
+                all = c.Data.GetProperty("conns").GetArrayLength();
+                Check(all >= 1, "system has at least one socket");
+                foreach (var row in c.Data.GetProperty("conns").EnumerateArray())
+                {
+                    string proto = row.GetProperty("proto").GetString()!;
+                    Check(proto is "tcp" or "udp", "proto");
+                    int v = row.GetProperty("v").GetInt32();
+                    Check(v is 4 or 6, "v");
+                    Check(row.GetProperty("local").GetString()!.Length > 0, "local");
+                    Check(row.GetProperty("lport").GetInt32() is >= 0 and <= 65535, "lport");
+                    Check(row.GetProperty("state").GetString()!.Length > 0, "state");
+                    Check(row.GetProperty("rx").GetInt64() >= 0 && row.GetProperty("tx").GetInt64() >= 0, "rx/tx");
+                }
+            }
+            using (var c = CallOk($"{{\"cmd\":\"netconns\",\"pid\":{self}}}"))
+                Check(c.Data.GetProperty("conns").ValueKind == JsonValueKind.Array, "conns of self");
+
+            using (var s0 = CallOk("{\"cmd\":\"netstream\"}"))
+            {
+                Check(s0.Data.GetProperty("chunks").GetArrayLength() == 0, "no chunks without a watch");
+                Check(s0.Data.GetProperty("watch").GetArrayLength() == 0, "empty watch");
+            }
+
+            string state;
+            using (var on = CallOk("{\"cmd\":\"netcap\",\"on\":true}"))
+            {
+                bool cap = on.Data.GetProperty("capture").GetBoolean();
+                string reason = on.Data.GetProperty("reason").GetString()!;
+                Check(cap == (reason == "ok"), "capture <=> reason ok");
+                Check(reason is "ok" or "elevation" or "failed" or "nonet", "reason value");
+                Check(on.Data.GetProperty("elevated").ValueKind is JsonValueKind.True or JsonValueKind.False, "elevated");
+                if (cap) Check(on.Data.GetProperty("ifaces").GetArrayLength() >= 1, "ifaces when capturing");
+                state = $"capture={cap} reason={reason} sockets={on.Data.GetProperty("ifaces").GetArrayLength()}";
+                foreach (var e in on.Data.GetProperty("errors").EnumerateArray()) state += $" [{e.GetString()}]";
+            }
+            using (var snap = CallOk("{\"cmd\":\"snapshot\"}"))
+            {
+                var sys = snap.Data.GetProperty("sys");
+                Check(sys.GetProperty("netRx").GetInt64() >= 0 && sys.GetProperty("netTx").GetInt64() >= 0, "sys.netRx/netTx");
+                Check(sys.GetProperty("netCap").ValueKind is JsonValueKind.True or JsonValueKind.False, "sys.netCap");
+                var cols = snap.Data.GetProperty("cols");
+                int n = cols.GetArrayLength();
+                Check(cols[n - 2].GetString() == "netRx" && cols[n - 1].GetString() == "netTx", "net columns are last");
+                foreach (var row in snap.Data.GetProperty("procs").EnumerateArray())
+                    Check(row[n - 2].GetInt64() >= 0 && row[n - 1].GetInt64() >= 0, "net rates are non-negative");
+            }
+            using (var w = CallOk($"{{\"cmd\":\"netwatch\",\"pid\":{self}}}"))
+            {
+                Check(w.Data.GetProperty("watch").GetArrayLength() == 1 && w.Data.GetProperty("watch")[0].GetUInt32() == self, "watch = self");
+                Check(w.Data.GetProperty("next").GetInt64() >= 0, "next");
+            }
+            using (var s1 = CallOk("{\"cmd\":\"netstream\",\"since\":0,\"max\":4096}"))
+            {
+                Check(s1.Data.GetProperty("chunks").ValueKind == JsonValueKind.Array, "chunks");
+                Check(s1.Data.GetProperty("next").GetInt64() >= 0, "stream next");
+                Check(s1.Data.GetProperty("more").ValueKind is JsonValueKind.True or JsonValueKind.False, "more");
+                Check(s1.Data.GetProperty("dropped").GetInt64() >= 0, "dropped");
+            }
+            using (var w2 = CallOk($"{{\"cmd\":\"netwatch\",\"pids\":[{self},4]}}"))
+                Check(w2.Data.GetProperty("watch").GetArrayLength() == 2, "watch of two pids");
+            using (var w0 = CallOk("{\"cmd\":\"netwatch\",\"pid\":0}"))
+                Check(w0.Data.GetProperty("watch").GetArrayLength() == 0, "watch cleared");
+            using (var off = CallOk("{\"cmd\":\"netcap\",\"on\":false}"))
+            {
+                Check(!off.Data.GetProperty("capture").GetBoolean(), "capture off");
+                Check(off.Data.GetProperty("reason").GetString() == "off", "reason off after stop");
+            }
+            return $"{state} interfaces={ifs.Count} counted={counted} sockets_listed={all}";
         });
 
         Test("leaks", () =>

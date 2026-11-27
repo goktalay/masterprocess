@@ -179,7 +179,7 @@ try {
 
     # ------------------------------------------------------------ snapshot x2
     Step 'snapshot' {
-        $expectCols = @('pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session')
+        $expectCols = @('pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session', 'netRx', 'netTx')
         $r1 = Call '"cmd":"snapshot"' 'snapshot #1'
         [void](ExpectOk $r1 'snapshot #1')
         $sw = [Diagnostics.Stopwatch]::StartNew()

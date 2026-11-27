@@ -142,7 +142,7 @@ internal static unsafe class ProcTable
 /// <summary>snapshot komutu: oranlar bir önceki snapshot çağrısına göre hesaplanır.</summary>
 internal static unsafe class Snapshot
 {
-    private struct Prev { public long Create, Cpu; public ulong Read, Write; }
+    private struct Prev { public long Create, Cpu, NetRx, NetTx; public ulong Read, Write; }
 
     private static Dictionary<uint, Prev> _prev = new();
     private static long _prevStamp;
@@ -166,10 +166,12 @@ internal static unsafe class Snapshot
     public static readonly string[] Cols =
     {
         "pid", "ppid", "name", "cpu", "ws", "priv", "ioRead", "ioWrite", "gpu", "gpuDed", "gpuShr", "threads", "handles", "start", "session",
+        "netRx", "netTx",
     };
 
     public static void Handle(JsonElement req, Utf8JsonWriter w)
     {
+        Net.Maintain();
         var rows = ProcTable.Query();
         long stamp = Stopwatch.GetTimestamp();
         long idle = 0, kernel = 0, user = 0;
@@ -199,6 +201,11 @@ internal static unsafe class Snapshot
         var wrArr = new double[rows.Count];
         var skip = new bool[rows.Count];
         double sysRead = 0, sysWrite = 0;
+        // Ağ: süreç başına bayt sayaçları yakalamadan gelir (kapalıysa boş), sistem toplamı arayüz sayaçlarından
+        var net = Net.Counters(createByPid);
+        var nrArr = new double[rows.Count];
+        var ntArr = new double[rows.Count];
+        Net.SysRate(elapsedSec, rates, out double netRx, out double netTx);
 
         for (int i = 0; i < rows.Count; i++)
         {
@@ -208,7 +215,8 @@ internal static unsafe class Snapshot
             if (r.Threads == 0 && Proto.HasExited(r.Pid)) { skip[i] = true; continue; }
 
             long cpu = r.KernelTime + r.UserTime;
-            next[r.Pid] = new Prev { Create = r.CreateTime, Cpu = cpu, Read = r.ReadBytes, Write = r.WriteBytes };
+            net.TryGetValue(r.Pid, out var nc);
+            next[r.Pid] = new Prev { Create = r.CreateTime, Cpu = cpu, Read = r.ReadBytes, Write = r.WriteBytes, NetRx = nc.Rx, NetTx = nc.Tx };
             if (rates && _prev.TryGetValue(r.Pid, out var pv) && pv.Create == r.CreateTime)
             {
                 if (cpu >= pv.Cpu) cpuArr[i] = (cpu - pv.Cpu) / (elapsed100ns * ncpu) * 100.0;
@@ -216,6 +224,8 @@ internal static unsafe class Snapshot
                 if (r.WriteBytes >= pv.Write) wrArr[i] = (r.WriteBytes - pv.Write) / elapsedSec;
                 sysRead += rdArr[i];
                 sysWrite += wrArr[i];
+                if (nc.Rx >= pv.NetRx) nrArr[i] = (nc.Rx - pv.NetRx) / elapsedSec;
+                if (nc.Tx >= pv.NetTx) ntArr[i] = (nc.Tx - pv.NetTx) / elapsedSec;
             }
         }
 
@@ -244,6 +254,9 @@ internal static unsafe class Snapshot
         w.WriteNumber("gpu", Proto.Pct(gpu.SysUtil));
         w.WriteNumber("gpuDedicated", gpu.SysDedicated);
         w.WriteNumber("gpuShared", gpu.SysShared);
+        w.WriteNumber("netRx", (long)Math.Round(netRx));
+        w.WriteNumber("netTx", (long)Math.Round(netTx));
+        w.WriteBoolean("netCap", Net.Capturing);
         w.WriteEndObject();
 
         w.WriteStartArray("cols");
@@ -277,6 +290,8 @@ internal static unsafe class Snapshot
             w.WriteNumberValue(r.Handles);
             w.WriteNumberValue(Proto.FileTimeToMs(r.CreateTime));
             w.WriteNumberValue(r.Session);
+            w.WriteNumberValue((long)Math.Round(nrArr[i]));
+            w.WriteNumberValue((long)Math.Round(ntArr[i]));
             w.WriteEndArray();
         }
         w.WriteEndArray();
