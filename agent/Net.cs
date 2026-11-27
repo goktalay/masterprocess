@@ -11,6 +11,8 @@ internal static unsafe partial class Net
     private static int _error;
     private static readonly List<string> _errors = new();
     private static long _maintAt;
+    private static Thread? _tick;
+    private static readonly AutoResetEvent _tickWake = new(false);
     private static Dictionary<ulong, (ulong In, ulong Out)> _ifPrev = new();
 
     // ---- soketler (Gate altında) ----
@@ -130,8 +132,47 @@ internal static unsafe partial class Net
                 live.T.Start();
             }
         }
-        if (_socks.Count > 0) { _capture = true; _reason = "ok"; }
+        if (_socks.Count > 0)
+        {
+            _capture = true; _reason = "ok";
+            if (_tick == null)
+            {
+                _tick = new Thread(TickMain) { IsBackground = true, Name = "net-tick" };
+                _tick.Start();
+            }
+        }
         else _reason = denied ? "elevation" : candidates == 0 ? "nonet" : "failed";
+    }
+
+    /// <summary>
+    /// Yakalama açıkken çalışır: paket gelmese de sahibi bekleyen akışları yeniden dener, eksik parça bekleyen
+    /// akışları ilerletir, eskileri atar. Kısa bağlantılarda son paketten sonra başka paket gelmez; bu yüzden
+    /// eşleme yalnız paket varışına bırakılamaz.
+    /// </summary>
+    private static void TickMain()
+    {
+        while (true)
+        {
+            int wait = 500;
+            lock (Gate)
+            {
+                if (!_capture) { _tick = null; return; }
+                try
+                {
+                    long now = Clock();
+                    long next = ResolvePending(now);
+                    FlushStale(now);
+                    if (now - _sweepAt >= 5000) Sweep(now, false);
+                    if (next >= 0) wait = (int)Math.Clamp(next, 4, 500);
+                    if (_pendFlows.Count > 0) wait = Math.Min(wait, 250);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("mp-agent: net tick error: " + ex.Message);
+                }
+            }
+            _tickWake.WaitOne(wait);
+        }
     }
 
     private static List<Thread>? StopSockets()
@@ -146,6 +187,7 @@ internal static unsafe partial class Net
         }
         _socks.Clear();
         _capture = false;
+        _tickWake.Set();
         return list;
     }
 
@@ -212,6 +254,7 @@ internal static unsafe partial class Net
                     _errors.Clear();
                     _flows.Clear();
                     _pendFlows.Clear();
+                    _unres.Clear();
                     _counters.Clear();
                     _heldBytes = 0;
                 }
@@ -269,7 +312,7 @@ internal static unsafe partial class Net
         if (!all && !ReadPids(req, filter)) throw AgentException.BadRequest("missing 'pid', 'pids' or 'all'");
         lock (Gate)
         {
-            long now = Environment.TickCount64;
+            long now = Clock();
             RefreshTables(now);
             var used = new HashSet<Flow>();
             var udpSum = new Dictionary<(uint, ushort), (long Rx, long Tx)>();
@@ -372,7 +415,9 @@ internal static unsafe partial class Net
         max = Math.Clamp(max, 4096, 1 << 20);
         lock (Gate)
         {
-            FlushStale(Environment.TickCount64);
+            long clock = Clock();
+            ResolvePending(clock);
+            FlushStale(clock);
             long last = _nextSeq - 1;
             long first = _ringCount > 0 ? _ring[_ringHead]!.Seq : _nextSeq;
             long next = Math.Min(Math.Max(since, first - 1), last);
@@ -418,7 +463,7 @@ internal static unsafe partial class Net
     /// <summary>Her anlık görüntüde: eski akışları atar; adresler değişmişse ya da bir soket ölmüşse soketleri yeniden açar.</summary>
     public static void Maintain()
     {
-        long now = Environment.TickCount64;
+        long now = Clock();
         List<Thread>? join = null;
         lock (Gate)
         {
@@ -441,6 +486,7 @@ internal static unsafe partial class Net
         var res = new Dictionary<uint, (long Rx, long Tx)>();
         lock (Gate)
         {
+            ResolvePending(Clock());
             List<uint>? gone = null;
             foreach (var kv in _counters)
             {

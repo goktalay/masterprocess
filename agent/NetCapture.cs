@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace MpAgent;
 
 /// <summary>
@@ -12,8 +14,8 @@ internal static unsafe partial class Net
     private const int MaxFlows = 20000;
     private const int RingCap = 1 << 15;
     private const long RingMaxBytes = 16L << 20;
-    private const int HeldPerFlow = 64 << 10;
-    private const long HeldMaxBytes = 8L << 20;
+    private const int HeldPerFlow = 1 << 20;
+    private const long HeldMaxBytes = 16L << 20;
     private const int PendingMaxCount = 32;
     private const int PendingMaxBytes = 256 << 10;
 
@@ -55,6 +57,7 @@ internal static unsafe partial class Net
         public long Last, NextTry, Resolved;
         public int Tries;
         public bool Closed, FinIn, FinOut;
+        public bool LostIn, LostOut; // sahibi bilinmeden beklerken atılan veri: çözülünce boşluk işareti konur
         public readonly Dir In = new(), Out = new();
         public List<Chunk>? Held;
         public int HeldBytes;
@@ -77,6 +80,7 @@ internal static unsafe partial class Net
     private static readonly List<Sock> _socks = new();
     private static readonly Dictionary<FlowKey, Flow> _flows = new();
     private static readonly HashSet<Flow> _pendFlows = new();
+    private static readonly HashSet<Flow> _unres = new(); // sahibi (PID) henüz bulunamayan akışlar
     private static readonly Dictionary<uint, Counter> _counters = new();
     private static HashSet<uint> _local4 = new();
     private static HashSet<(ulong, ulong)> _local6 = new();
@@ -86,16 +90,20 @@ internal static unsafe partial class Net
     private static readonly Dictionary<EpKey, uint> _listen = new();
     private static readonly Dictionary<EpKey, uint> _udp = new();
     private static List<ConnRow> _rows = new();
-    private static long _tablesAt = -100000;
+    private static long _tablesAt = -100000, _tablesCost;
 
     private static readonly Chunk?[] _ring = new Chunk?[RingCap];
     private static int _ringHead, _ringCount, _flowId;
     private static long _ringBytes, _nextSeq = 1, _dropped, _heldBytes, _sweepAt;
 
+    /// <summary>Tekdüze saat (ms). Environment.TickCount64 10–16 ms adımlıdır; kısa bağlantıları eşlemek için yetmez.</summary>
+    private static long Clock() => Stopwatch.GetTimestamp() / (Stopwatch.Frequency / 1000);
+
     // ---- soket sahipliği ----
 
     private static void RefreshTables(long now)
     {
+        long t0 = Stopwatch.GetTimestamp();
         _rows = NetTables.Query();
         _tcp.Clear(); _listen.Clear(); _udp.Clear();
         foreach (var r in _rows)
@@ -106,6 +114,16 @@ internal static unsafe partial class Net
             else _tcp[new FlowKey(r.V, 6, r.L0, r.L1, r.R0, r.R1, r.LPort, r.RPort)] = r.Pid;
         }
         _tablesAt = now;
+        _tablesCost = (Stopwatch.GetTimestamp() - t0) / (Stopwatch.Frequency / 1000) + 1;
+        if (_unres.Count == 0) return;
+        // taze tabloda sahibi bulunan bekleyen akışlar
+        List<(Flow, uint)>? hit = null;
+        foreach (var f in _unres)
+        {
+            uint pid = Lookup(f.Key);
+            if (pid != 0) (hit ??= new List<(Flow, uint)>()).Add((f, pid));
+        }
+        if (hit != null) foreach (var (f, pid) in hit) Bind(f, pid, now);
     }
 
     private static uint Lookup(in FlowKey k)
@@ -140,30 +158,61 @@ internal static unsafe partial class Net
         f.Held = null; f.HeldBytes = 0;
     }
 
-    private static void TryResolve(Flow f, long now)
+    /// <summary>Akışın sahibi bulundu: bekleyen sayaçlar ve tutulan veri sahibine yazılır.</summary>
+    private static void Bind(Flow f, uint pid, long now)
     {
-        uint pid = Lookup(f.Key);
-        if (pid == 0 && now - _tablesAt >= 20) { RefreshTables(now); pid = Lookup(f.Key); }
-        if (pid == 0)
-        {
-            f.Tries = Math.Min(f.Tries + 1, 8);
-            f.NextTry = now + (10L << f.Tries); // 20 ms … 2,5 sn
-            return;
-        }
         f.Pid = pid;
         f.Resolved = now;
+        _unres.Remove(f);
         if (f.PendRx != 0 || f.PendTx != 0)
         {
             var c = CounterFor(pid);
             c.Rx += f.PendRx; c.Tx += f.PendTx;
             f.PendRx = 0; f.PendTx = 0;
         }
+        bool watched = _watch.Contains(pid);
         if (f.Held != null)
         {
             var held = f.Held;
             DropHeld(f);
-            if (_watch.Contains(pid)) foreach (var ch in held) { ch.Pid = pid; Push(ch); }
+            if (watched) foreach (var ch in held) { ch.Pid = pid; Push(ch); }
         }
+        if (watched)
+        {
+            long t = Proto.NowMs();
+            if (f.LostIn) Push(new Chunk { T = t, Pid = pid, Fl = f, In = true, F = F_GAP });
+            if (f.LostOut) Push(new Chunk { T = t, Pid = pid, Fl = f, In = false, F = F_GAP });
+        }
+        f.LostIn = false; f.LostOut = false;
+    }
+
+    private static void TryResolve(Flow f, long now)
+    {
+        uint pid = Lookup(f.Key);
+        if (pid != 0) { Bind(f, pid, now); return; }
+        // Yeni akışta tablo hemen yenilenir (bağlantı tabloya paketle aynı anda girer); denemeler arttıkça seyrekleşir.
+        // Tablo okuması pahalıysa (çok soket) aralık buna göre uzar.
+        long fresh = f.Tries < 3 ? 3 : f.Tries < 6 ? 20 : 250;
+        if (now - _tablesAt >= Math.Max(fresh, _tablesCost * 4))
+        {
+            RefreshTables(now); // bekleyen bütün akışları dener
+            if (f.Pid != 0) return;
+        }
+        f.Tries = Math.Min(f.Tries + 1, 12);
+        f.NextTry = now + (2L << f.Tries); // 4 ms … 8 sn
+        if (f.Tries == 1) _tickWake.Set();
+    }
+
+    /// <summary>Zamanı gelen bekleyen akışlar yeniden denenir. Dönen değer: bir sonraki denemeye kalan süre (ms); bekleyen yoksa -1.</summary>
+    private static long ResolvePending(long now)
+    {
+        if (_unres.Count == 0) return -1;
+        List<Flow>? due = null;
+        foreach (var f in _unres) if (now >= f.NextTry) (due ??= new List<Flow>()).Add(f);
+        if (due != null) foreach (var f in due) if (f.Pid == 0) TryResolve(f, now);
+        long next = long.MaxValue;
+        foreach (var f in _unres) if (f.NextTry < next) next = f.NextTry;
+        return next == long.MaxValue ? -1 : Math.Max(0, next - now);
     }
 
     // ---- halka tampon ----
@@ -202,11 +251,16 @@ internal static unsafe partial class Net
             flags &= ~F_GAP;
             off += n;
             if (f.Pid != 0) Push(ch);
+            else if (inbound ? f.LostIn : f.LostOut) { } // bu yönde veri atıldı: sıra bozulmasın diye sonrası da tutulmaz
             else if (f.HeldBytes + n <= HeldPerFlow && _heldBytes + n <= HeldMaxBytes)
             {
-                if (f.Held == null) { f.Held = new List<Chunk>(); f.HeldSince = Environment.TickCount64; }
+                if (f.Held == null) { f.Held = new List<Chunk>(); f.HeldSince = Clock(); }
                 f.Held.Add(ch);
                 f.HeldBytes += n; _heldBytes += n;
+            }
+            else if (n > 0)
+            {
+                if (inbound) f.LostIn = true; else f.LostOut = true;
             }
         } while (off < data.Length);
     }
@@ -256,7 +310,7 @@ internal static unsafe partial class Net
         d.PendingBytes -= data.Length;
         d.Next = seq + (uint)data.Length;
         Emit(f, inbound, data, F_GAP);
-        d.PendingSince = Environment.TickCount64;
+        d.PendingSince = Clock();
         Drain(f, inbound, d);
     }
 
@@ -334,7 +388,7 @@ internal static unsafe partial class Net
 
     private static void ResetStreams()
     {
-        foreach (var f in _flows.Values) { f.In.Reset(); f.Out.Reset(); DropHeld(f); }
+        foreach (var f in _flows.Values) { f.In.Reset(); f.Out.Reset(); DropHeld(f); f.LostIn = false; f.LostOut = false; }
         _pendFlows.Clear();
         _heldBytes = 0;
     }
@@ -343,6 +397,7 @@ internal static unsafe partial class Net
     {
         DropHeld(f);
         _pendFlows.Remove(f);
+        _unres.Remove(f);
         _flows.Remove(f.Key);
     }
 
@@ -354,10 +409,19 @@ internal static unsafe partial class Net
         {
             long idle = now - f.Last;
             if (idle > 120000 || (f.Closed && idle > 60000) || (hard && idle > 10000)) (dead ??= new List<Flow>()).Add(f);
-            else if (f.Held != null && now - f.HeldSince > 3000) DropHeld(f);
+            else if (f.Held != null && now - f.HeldSince > 3000)
+            {
+                // sahibi 3 sn içinde bulunamadı: tutulan veri bırakılır; sonradan bulunursa boşluk işaretlenir
+                foreach (var ch in f.Held)
+                {
+                    if (ch.Data.Length == 0) continue;
+                    if (ch.In) f.LostIn = true; else f.LostOut = true;
+                }
+                DropHeld(f);
+            }
         }
         if (dead != null) foreach (var f in dead) RemoveFlow(f);
-        if (hard && _flows.Count >= MaxFlows) { _flows.Clear(); _pendFlows.Clear(); _heldBytes = 0; }
+        if (hard && _flows.Count >= MaxFlows) { _flows.Clear(); _pendFlows.Clear(); _unres.Clear(); _heldBytes = 0; }
     }
 
     // ---- paket ayrıştırma (Gate altında) ----
@@ -453,7 +517,7 @@ internal static unsafe partial class Net
         dport = (ushort)((th[2] << 8) | th[3]);
 
         var key = inbound ? new FlowKey(v, proto, d0, d1, s0, s1, dport, sport) : new FlowKey(v, proto, s0, s1, d0, d1, sport, dport);
-        long now = Environment.TickCount64;
+        long now = Clock();
         bool newConn = proto == 6 && (flags & 0x12) == 0x02; // SYN, ACK'siz: aynı uçlarla yeni bağlantı
         if (!_flows.TryGetValue(key, out var f) || newConn)
         {
@@ -461,6 +525,7 @@ internal static unsafe partial class Net
             if (_flows.Count >= MaxFlows) Sweep(now, true);
             f = new Flow { Id = ++_flowId, Key = key };
             _flows[key] = f;
+            _unres.Add(f);
         }
         f.Last = now;
 

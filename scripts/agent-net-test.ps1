@@ -9,7 +9,10 @@
 param(
     [string]$Agent = 'agent-out\mp-agent.exe',
     [string]$Label = 'default',
-    [switch]$NoExternal
+    [switch]$NoExternal,
+    # Windows Güvenlik Duvarı açıkken ve yardımcıya gelen izin kuralı yokken dışarıdan GELEN paketler ham sokete
+    # ulaşmaz. Bu anahtarla dış gelen veriye ilişkin doğrulamalar hata yerine uyarı sayılır.
+    [switch]$InboundOptional
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,6 +99,27 @@ function Read-Stream {
     return , $out
 }
 
+# Geri döngüde bir TCP alışverişi: istemci $up gönderir, sunucu $down ile yanıtlar. -Close ile iki uç hemen kapatılır.
+function Invoke-LoopTcp($listener, [System.Net.IPAddress]$addr, [byte[]]$up, [byte[]]$down, [switch]$Close) {
+    $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    $client = [System.Net.Sockets.TcpClient]::new($addr.AddressFamily)
+    $client.Connect($addr, $port)
+    $server = $listener.AcceptTcpClient()
+    $cport = ([System.Net.IPEndPoint]$client.Client.LocalEndPoint).Port
+    $cs = $client.GetStream(); $ss = $server.GetStream()
+    $cs.Write($up, 0, $up.Length); $cs.Flush()
+    $got = [byte[]]::new($up.Length); $n = 0
+    while ($n -lt $got.Length) { $k = $ss.Read($got, $n, $got.Length - $n); if ($k -le 0) { break }; $n += $k }
+    $wt = $ss.WriteAsync($down, 0, $down.Length)
+    $cs.ReadTimeout = 10000
+    $got2 = [byte[]]::new($down.Length); $n = 0
+    while ($n -lt $got2.Length) { $k = $cs.Read($got2, $n, $got2.Length - $n); if ($k -le 0) { break }; $n += $k }
+    $okW = $wt.Wait(10000)
+    $ok = $okW -and (SameBytes $got $up) -and (SameBytes $got2 $down)
+    if ($Close) { $client.Dispose(); $server.Dispose(); $client = $null; $server = $null }
+    return @{ Ok = $ok; Port = $port; CPort = $cport; Up = $up; Down = $down; Client = $client; Server = $server }
+}
+
 function Find-Stream($streams, [string]$dir, [string]$proto, [int]$lport, [int]$rport) {
     return @($streams | Where-Object { $_.Dir -eq $dir -and $_.Proto -eq $proto -and ($lport -eq 0 -or $_.LPort -eq $lport) -and ($rport -eq 0 -or $_.RPort -eq $rport) })
 }
@@ -119,6 +143,8 @@ $script:AgentOut = $agentProc.StandardOutput
 $script:Capture = $false
 $script:Ext = @{}
 $script:Lo = @{}
+$script:Lo6 = @{}
+$script:Short = @()
 
 try {
     Step 'hello' {
@@ -164,6 +190,34 @@ try {
         Assert (SameBytes $got2 $down) 'client did not receive the download'
         $script:Lo = @{ Port = $port; CPort = $cport; Up = $up; Down = $down; Client = $client; Server = $server; Listener = $listener }
         Write-Host "loopback: server 127.0.0.1:$port client port $cport up=$($up.Length) down=$($down.Length)"
+    }
+
+    # ------------------------------------------------------------ kısa ömürlü bağlantılar
+    # Bağlan, gönder, al, hemen kapat: süreç eşlemesi bağlantı kapanmadan yapılamazsa veri kaybolur.
+    Step 'loopback short' {
+        $listener = $script:Lo.Listener
+        if (-not $listener) { throw 'no listener' }
+        $list = @()
+        for ($i = 0; $i -lt 6; $i++) {
+            $x = Invoke-LoopTcp $listener ([System.Net.IPAddress]::Loopback) (Pattern (200 + $i) (20 + $i)) (Pattern (5000 + $i * 20000) (40 + $i)) -Close
+            Assert $x.Ok "short connection $i payload mismatch"
+            $list += $x
+            if ($i -ge 3) { Start-Sleep -Milliseconds 40 }
+        }
+        $script:Short = $list
+        Write-Host ("short: " + (($list | ForEach-Object { "$($_.CPort)" }) -join ','))
+    }
+
+    # ------------------------------------------------------------ geri döngü TCP (IPv6)
+    Step 'loopback tcp6' {
+        if (-not [System.Net.Sockets.Socket]::OSSupportsIPv6) { Warn 'IPv6 is not available'; return }
+        $l6 = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::IPv6Loopback, 0)
+        $l6.Start()
+        $x = Invoke-LoopTcp $l6 ([System.Net.IPAddress]::IPv6Loopback) (Pattern 2500 71) (Pattern 40000 133)
+        Assert $x.Ok 'ipv6 loopback payload mismatch'
+        $x.Listener = $l6
+        $script:Lo6 = $x
+        Write-Host "loopback6: server [::1]:$($x.Port) client port $($x.CPort)"
     }
 
     # ------------------------------------------------------------ geri döngü UDP
@@ -215,7 +269,7 @@ try {
                 Write-Host ("snapshot: sys.netRx=$($s.data.sys.netRx) sys.netTx=$($s.data.sys.netTx) netCap=$($s.data.sys.netCap) self.netRx=$($row[$iRx]) self.netTx=$($row[$iTx])")
                 Assert ($s.data.sys.netCap -eq $true) 'sys.netCap'
                 Assert ($s.data.sys.netRx -gt 0) 'sys.netRx is zero after a download'
-                Assert ($row[$iRx] -gt 0) 'netRx of this process is zero after a download'
+                if ($row[$iRx] -le 0) { if ($InboundOptional) { Warn 'netRx of this process is zero after a download' } else { Fail 'netRx of this process is zero after a download' } }
                 Assert ($row[$iTx] -gt 0) 'netTx of this process is zero after a download'
             } catch { Warn ("download failed: " + $_.Exception.Message) }
             $hc.Dispose()
@@ -258,13 +312,22 @@ try {
             if ($cl.Count -eq 1) { Write-Host ("EXTRACT lo client rx=$($cl[0].rx) tx=$($cl[0].tx) (payload down=$($script:Lo.Down.Length) up=$($script:Lo.Up.Length))") }
             if ($sv.Count -eq 1) { Write-Host ("EXTRACT lo server rx=$($sv[0].rx) tx=$($sv[0].tx)") }
         }
+        if ($script:Lo6.Port) {
+            $c6 = @($r.data.conns | Where-Object { $_.proto -eq 'tcp' -and $_.v -eq 6 -and $_.lport -eq $script:Lo6.CPort -and $_.rport -eq $script:Lo6.Port })
+            Assert ($c6.Count -eq 1) "ipv6 client row count = $($c6.Count)"
+            if ($c6.Count -eq 1) {
+                Write-Host ("EXTRACT lo6 client rx=$($c6[0].rx) tx=$($c6[0].tx) flow=$($c6[0].flow) (payload down=$($script:Lo6.Down.Length) up=$($script:Lo6.Up.Length))")
+                Assert ($c6[0].rx -ge $script:Lo6.Down.Length) 'ipv6 client rx is below the payload'
+                Assert ($c6[0].tx -ge $script:Lo6.Up.Length) 'ipv6 client tx is below the payload'
+            }
+        }
         if ($script:Ext.Cab) {
             $h = @($r.data.conns | Where-Object { $_.proto -eq 'tcp' -and $_.rport -eq 80 })
             $rx = ($h | Measure-Object -Property rx -Sum).Sum
             $tx = ($h | Measure-Object -Property tx -Sum).Sum
             Write-Host ("EXTRACT http rows=$($h.Count) rx=$rx tx=$tx (cab=$($script:Ext.Cab.Length))")
             Assert ($h.Count -ge 1) 'no port 80 connection is listed for this process'
-            Assert ($rx -ge $script:Ext.Cab.Length) "port 80 rx $rx is below the downloaded size"
+            if ($rx -lt $script:Ext.Cab.Length) { if ($InboundOptional) { Warn "port 80 rx $rx is below the downloaded size" } else { Fail "port 80 rx $rx is below the downloaded size" } }
             Assert ($tx -gt 0) 'port 80 tx is zero'
         }
     }
@@ -281,6 +344,29 @@ try {
             $res.lo_client_in = ($cIn.Count -eq 1 -and (SameBytes $cIn[0].Bytes $script:Lo.Down))
             $res.lo_server_in = ($sIn.Count -eq 1 -and (SameBytes $sIn[0].Bytes $script:Lo.Up))
             $res.lo_server_out = ($sOut.Count -eq 1 -and (SameBytes $sOut[0].Bytes $script:Lo.Down))
+        }
+        if ($script:Short.Count -gt 0) {
+            $good = 0
+            foreach ($x in $script:Short) {
+                $o = @(Find-Stream $streams 'out' 'tcp' $x.CPort $x.Port)
+                $i = @(Find-Stream $streams 'in' 'tcp' $x.CPort $x.Port)
+                $so = @(Find-Stream $streams 'out' 'tcp' $x.Port $x.CPort)
+                $si = @(Find-Stream $streams 'in' 'tcp' $x.Port $x.CPort)
+                $ok = ($o.Count -eq 1 -and (SameBytes $o[0].Bytes $x.Up)) -and ($i.Count -eq 1 -and (SameBytes $i[0].Bytes $x.Down)) -and ($so.Count -eq 1 -and (SameBytes $so[0].Bytes $x.Down)) -and ($si.Count -eq 1 -and (SameBytes $si[0].Bytes $x.Up))
+                if ($ok) { $good++ } else { Write-Host ("short miss: cport=$($x.CPort) out=$($o.Count)/$(if ($o.Count) { $o[0].Bytes.Length }) in=$($i.Count)/$(if ($i.Count) { $i[0].Bytes.Length }) srvOut=$($so.Count)/$(if ($so.Count) { $so[0].Bytes.Length }) srvIn=$($si.Count)/$(if ($si.Count) { $si[0].Bytes.Length }) want up=$($x.Up.Length) down=$($x.Down.Length)") }
+            }
+            Write-Host ("EXTRACT short ok=$good of $($script:Short.Count)")
+            $res.lo_short = ($good -eq $script:Short.Count)
+        }
+        if ($script:Lo6.Port) {
+            $cOut = @(Find-Stream $streams 'out' 'tcp' $script:Lo6.CPort $script:Lo6.Port)
+            $cIn = @(Find-Stream $streams 'in' 'tcp' $script:Lo6.CPort $script:Lo6.Port)
+            $sIn = @(Find-Stream $streams 'in' 'tcp' $script:Lo6.Port $script:Lo6.CPort)
+            $sOut = @(Find-Stream $streams 'out' 'tcp' $script:Lo6.Port $script:Lo6.CPort)
+            $res.lo6_client_out = ($cOut.Count -eq 1 -and $cOut[0].V -eq 6 -and (SameBytes $cOut[0].Bytes $script:Lo6.Up))
+            $res.lo6_client_in = ($cIn.Count -eq 1 -and (SameBytes $cIn[0].Bytes $script:Lo6.Down))
+            $res.lo6_server_in = ($sIn.Count -eq 1 -and (SameBytes $sIn[0].Bytes $script:Lo6.Up))
+            $res.lo6_server_out = ($sOut.Count -eq 1 -and (SameBytes $sOut[0].Bytes $script:Lo6.Down))
         }
         if ($script:Lo.UdpMsg) {
             $uo = @(Find-Stream $streams 'out' 'udp' $script:Lo.UdpA $script:Lo.UdpB)
@@ -313,7 +399,11 @@ try {
         }
         $line = ($res.GetEnumerator() | ForEach-Object { "$($_.Key)=$(if ($_.Value) { 'ok' } else { 'MISS' })" }) -join ' '
         Write-Host "RESULT [$Label] $line"
-        foreach ($e in $res.GetEnumerator()) { if (-not $e.Value) { Fail "$($e.Key) not captured" } }
+        foreach ($e in $res.GetEnumerator()) {
+            if ($e.Value) { continue }
+            if ($InboundOptional -and $e.Key -like 'ext_*_in') { Warn "$($e.Key) not captured (inbound is optional in this run)" }
+            else { Fail "$($e.Key) not captured" }
+        }
     }
 
     Step 'netcap status' {
@@ -328,8 +418,8 @@ try {
     }
 }
 finally {
-    foreach ($x in @($script:Lo.Client, $script:Lo.Server)) { if ($x) { try { $x.Dispose() } catch { } } }
-    if ($script:Lo.Listener) { try { $script:Lo.Listener.Stop() } catch { } }
+    foreach ($x in @($script:Lo.Client, $script:Lo.Server, $script:Lo6.Client, $script:Lo6.Server)) { if ($x) { try { $x.Dispose() } catch { } } }
+    foreach ($x in @($script:Lo.Listener, $script:Lo6.Listener)) { if ($x) { try { $x.Stop() } catch { } } }
     foreach ($x in @($script:Lo.UdpSockets)) { if ($x) { try { $x.Dispose() } catch { } } }
     try { $script:AgentIn.Close() } catch { }
     if (-not $agentProc.WaitForExit(5000)) { try { $agentProc.Kill() } catch { } }
