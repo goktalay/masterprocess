@@ -343,7 +343,8 @@ body {
 .nt-head .input.invalid { border-color: var(--err); }
 .nt-head .check.sm { align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .nt-head .check.sm input { margin: 0; width: 14px; height: 14px; }
-.nt-stream { overflow: hidden; display: flex; flex-direction: column; }
+.nt-head + .vl { flex: none; }
+.nt-stream { flex: none; overflow: hidden; display: flex; flex-direction: column; }
 .nt-stream[hidden] { display: none; }
 .nt-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 .nt-bar .seg.sm { padding: 2px; }

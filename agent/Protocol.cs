@@ -20,7 +20,7 @@ internal sealed class AgentException : Exception
 
 internal static unsafe class Proto
 {
-    public const string AgentVersion = "1.0.0";
+    public const string AgentVersion = "1.1.0";
     public const int ProtocolVersion = 1;
 
     /// <summary>Onaltılık dizge: 0x öneki yok, küçük harf, baştaki sıfırlar atılır.</summary>

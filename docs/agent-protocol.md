@@ -28,7 +28,7 @@ Aynı protokolü Linux'ta `src/provider-linux.js` (procfs) uygular; arayüz iki 
 ### hello
 `{"id":1,"cmd":"hello"}` →
 ```json
-{"agent":"1.0.0","protocol":1,"pid":1234,"elevated":false,"debugPrivilege":false,"arch":"x64",
+{"agent":"1.1.0","protocol":1,"pid":1234,"elevated":false,"debugPrivilege":false,"arch":"x64",
  "os":"10.0.22631","cpuCount":8,"pageSize":4096,"totalPhys":17179869184,
  "gpuCounters":true,"net":true,
  "gpus":[{"luid":"0000000000012a4f","name":"NVIDIA GeForce RTX 3060","dedicated":12884901888,"shared":8589934592,"software":false}]}

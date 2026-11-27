@@ -331,7 +331,15 @@ internal static unsafe partial class Net
             Emit(f, inbound, default, F_RST);
             return;
         }
-        if (!d.Has) { d.Has = true; d.Next = seq; }
+        if (!d.Has)
+        {
+            // İzleme, kurulu bir bağlantının ortasında başladı: sıra numarası ilk veri parçasından alınır.
+            // Boş ACK'ler ve keep-alive yoklamaları (Windows: tek 0x00 baytı, PSH'siz; sıra numarası bir geride) veri sayılmaz.
+            bool fin = (tcpFlags & 0x01) != 0;
+            if (data.Length == 0 && !fin) return;
+            if (data.Length == 1 && data[0] == 0 && (tcpFlags & 0x09) == 0) { d.Has = true; d.Next = seq + 1; return; }
+            d.Has = true; d.Next = seq;
+        }
         if (data.Length > 0)
         {
             int diff = (int)(seq - d.Next);
