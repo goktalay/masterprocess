@@ -199,7 +199,7 @@ try {
             $pids = [System.Collections.Generic.HashSet[long]]::new()
             $anyCpu = $false; $maxCpu = 0.0; $badLen = 0; $agentRow = $null; $targetRow = $null; $selfRow = $null
             foreach ($row in $rows) {
-                if (@($row).Count -ne 15) { $badLen++; continue }
+                if (@($row).Count -ne $expectCols.Count) { $badLen++; continue }
                 [void]$pids.Add([long]$row[0])
                 if ($row[3] -gt 0) { $anyCpu = $true }
                 if ($row[3] -gt $maxCpu) { $maxCpu = [double]$row[3] }
@@ -207,7 +207,7 @@ try {
                 if ($row[0] -eq $tpid) { $targetRow = $row }
                 if ($row[0] -eq $PID) { $selfRow = $row }
             }
-            Assert ($badLen -eq 0) "$badLen rows do not have 15 columns"
+            Assert ($badLen -eq 0) "$badLen rows do not have $($expectCols.Count) columns"
             Assert ($rows.Count -gt 10) "only $($rows.Count) processes"
             Assert ($pids.Count -eq $rows.Count) 'duplicate pids'
             Assert (-not $pids.Contains(0)) 'pid 0 is listed'
