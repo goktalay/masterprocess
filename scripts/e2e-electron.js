@@ -153,6 +153,18 @@ let cleanup = async () => {};
   await tab('gpu', 1500);
   { const m = await bodyMsg(); (WIN ? check : (c, x) => ok(x))(!m, `gpu: ${m || 'sayaçlar gösteriliyor'}`); }
   await shot('e2e-06-gpu');
+  {
+    // Tanılama: üst şeritteki sistem değeri ile süreç değerleri ve Windows'un kendi sayaçları yan yana
+    const g = await main.evaluate(() => ({ sys: APP.sys ? APP.sys.gpu : null, top: APP.procs.filter((p) => p.gpu >= 0.5).sort((a, b) => b.gpu - a.gpu).slice(0, 6).map((p) => `${p.name}:${p.pid}=${p.gpu}`) }));
+    ok(`gpu: sistem %${g.sys} · süreçler ${g.top.join(', ') || 'yok'}`);
+    if (WIN) {
+      try {
+        const cmd = "(Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples | Where-Object { $_.CookedValue -gt 0.5 } | Sort-Object CookedValue -Descending | Select-Object -First 8 | ForEach-Object { '{0}={1:N1}' -f $_.InstanceName, $_.CookedValue }";
+        const out = require('child_process').execFileSync('powershell', ['-NoProfile', '-Command', cmd], { encoding: 'utf8', timeout: 30000 });
+        ok(`gpu (Windows sayaçları): ${out.trim().replace(/\s+/g, ' ') || 'etkin örnek yok'}`);
+      } catch (e) { ok(`gpu (Windows sayaçları): okunamadı — ${String(e.message).replace(/\s+/g, ' ').slice(0, 120)}`); }
+    }
+  }
   await tab('window', 1500);
   ok(`pencere: ${(await main.evaluate(() => document.querySelector('.d-body').textContent.trim().replace(/\s+/g, ' ').slice(0, 90)))}`);
 

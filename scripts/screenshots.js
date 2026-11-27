@@ -146,10 +146,16 @@ async function run(lang, theme, only) {
     }
 
     if (!only) {
-      // GPU: yalnız gerçekten sayaç varsa
-      await tab('gpu', 3000);
-      if (!(await hasMsg())) await shot(8, 'gpu');
-      else console.log(`  (gpu atlandı: ${(await main.textContent('.d-body')).trim().replace(/\s+/g, ' ').slice(0, 90)})`);
+      // GPU: o an GPU motoru kullanan süreçlerden en yoğunu seçilir; motor satırı olmayan (boş) sekmenin görüntüsü alınmaz
+      const gtop = await main.evaluate(() => APP.procs.filter((p) => p.gpu >= 1).sort((a, b) => b.gpu - a.gpu).slice(0, 5).map((p) => ({ pid: p.pid, name: p.name, gpu: p.gpu })));
+      console.log(`  (gpu: sistem %${await main.evaluate(() => (APP.sys ? APP.sys.gpu : null))} · süreçler ${gtop.map((p) => `${p.name}:${p.pid}=%${p.gpu}`).join(', ') || 'yok'})`);
+      if (gtop.length && await select(gtop[0].pid)) {
+        await tab('gpu', 3000);
+        await main.waitForSelector('.d-body .vl-row', { timeout: 8000 }).catch(() => {});
+        if (!(await hasMsg()) && await main.$('.d-body .vl-row')) await shot(8, 'gpu');
+        else console.log(`  (gpu atlandı: ${(await main.textContent('.d-body')).trim().replace(/\s+/g, ' ').slice(0, 90)})`);
+      } else console.log('  (gpu atlandı: GPU motoru kullanan süreç yok)');
+      if (!(await select(target.pid))) throw new Error('hedef süreç tabloda yok');
 
       await tab('modules', 300);
       await main.waitForSelector('.d-body .vl-row', { timeout: 20000 }).catch(() => {});
