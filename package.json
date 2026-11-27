@@ -1,7 +1,7 @@
 {
   "name": "master-process",
   "productName": "Master Process",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Windows için süreç yöneticisi: süreç ağacı, süreç başına CPU / RAM / G/Ç / GPU grafikleri, bellek ve disk yerleşim haritaları, pencere görüntüsü, açık dosyalar, hex görüntüleyici ve tarihçe",
   "main": "src/main.js",
   "author": "Mastertool",

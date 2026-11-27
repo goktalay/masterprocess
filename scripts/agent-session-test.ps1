@@ -179,7 +179,7 @@ try {
 
     # ------------------------------------------------------------ snapshot x2
     Step 'snapshot' {
-        $expectCols = @('pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session')
+        $expectCols = @('pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session', 'netRx', 'netTx')
         $r1 = Call '"cmd":"snapshot"' 'snapshot #1'
         [void](ExpectOk $r1 'snapshot #1')
         $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -384,6 +384,37 @@ try {
             if ($d.clusterSize -gt 0) { Assert ($clusters * $d.clusterSize -ge 5MB -and $clusters * $d.clusterSize -lt 5MB + 64 * $d.clusterSize) "extent clusters ($clusters) do not match the file size" }
             Write-Host ("EXTRACT filemap extents=" + $ext.Count + " clusters=" + $clusters + " fragments=" + $d.fragments)
         }
+    }
+
+    Step 'volmap' {
+        $r = Call ('"cmd":"volmap","path":{0},"cells":2048' -f (ToJson $script:BigFile)) 'volmap' -Quiet
+        if (-not $r.ok) {
+            # Birim bit eşlemi yönetici hakkı isteyebilir: protokolde tanımlı iki hata dışındaki her şey hatadır
+            if ($r.err -eq 'access' -or $r.err -eq 'unsupported') { Warn "volmap not available: $($r.err) ($($r.msg))" }
+            else { Fail "volmap: unexpected error '$($r.err)' ($($r.msg))" }
+        } else {
+            $d = $r.data
+            $map = [Convert]::FromBase64String([string]$d.b64)
+            Assert ($d.cells -eq 2048 -and $map.Length -eq 2048) "cells = $($d.cells), bytes = $($map.Length)"
+            Assert ($d.totalClusters -gt 0 -and $d.usedClusters -gt 0 -and $d.usedClusters -le $d.totalClusters) "used $($d.usedClusters) of $($d.totalClusters)"
+            Assert ($d.volume -is [string] -and $d.volume.EndsWith('\')) "volume = $($d.volume)"
+            $sum = 0.0
+            foreach ($b in $map) { $sum += $b }
+            $avg = $sum / (2048 * 255.0)
+            $ratio = [double]$d.usedClusters / [double]$d.totalClusters
+            Assert ([Math]::Abs($avg - $ratio) -lt 0.05) ("density average {0:F3} vs used ratio {1:F3}" -f $avg, $ratio)
+            # Az önce yazılan dosyanın parçaları haritada dolu hücrelere düşmeli
+            $fm = Call ('"cmd":"filemap","path":{0}' -f (ToJson $script:BigFile)) 'filemap(volmap)' -Quiet
+            if (ExpectOk $fm 'filemap(volmap)') {
+                foreach ($e in @($fm.data.extents)) {
+                    $c = [int][Math]::Min(2047, [Math]::Floor(([double]$e[0]) * 2048 / [double]$d.totalClusters))
+                    if ($map[$c] -eq 0) { Fail "volmap: cell $c of the extent at $($e[0]) is empty" }
+                }
+            }
+            Write-Host ("EXTRACT volmap volume=" + $d.volume + " total=" + $d.totalClusters + " used=" + $d.usedClusters + (" avg={0:F3}" -f $avg))
+        }
+        ExpectErr (Call '"cmd":"volmap"' 'volmap(no path)') 'bad_request' 'volmap(no path)'
+        ExpectErr (Call ('"cmd":"volmap","path":{0},"cells":4' -f (ToJson $script:BigFile)) 'volmap(cells)') 'bad_request' 'volmap(cells)'
     }
 
     Step 'readfile' {

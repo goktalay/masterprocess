@@ -5,10 +5,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { createProvider, parseStat, protectOf, niceToPriority } = require('../src/provider-linux');
+const net = require('net');
+const { createProvider, parseStat, protectOf, niceToPriority, procAddr, parseProcNet, parseNetDev } = require('../src/provider-linux');
 
 const linux = { skip: process.platform !== 'linux' && 'yalnız Linux' };
-const COLS = ['pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session'];
+const COLS = ['pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session', 'netRx', 'netTx'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('parseStat: adında boşluk ve parantez olan süreç', () => {
@@ -58,6 +59,75 @@ test('hello + snapshot: protokol biçimi, kendi sürecimiz listede, ikinci çağ
   assert.ok(me2[3] > 0 && me2[3] <= 100, `cpu ${me2[3]}`);
   assert.ok(b.sys.cpu >= 0 && b.sys.cpu <= 100);
   assert.ok(b.sys.memTotal > b.sys.memAvail && b.sys.memAvail > 0);
+  assert.ok(Number.isFinite(b.sys.netRx) && b.sys.netRx >= 0 && Number.isFinite(b.sys.netTx) && b.sys.netTx >= 0);
+  assert.equal(b.sys.netCap, false);
+  assert.ok(b.procs.every((r) => r[15] === 0 && r[16] === 0), 'süreç başına ağ hızı ölçülmez');
+});
+
+test('ağ tabloları: adres çözme, /proc/net satırları, arayüz sayaçları', () => {
+  assert.equal(procAddr('0100007F'), '127.0.0.1');
+  assert.equal(procAddr('0A01A8C0'), '192.168.1.10');
+  assert.equal(procAddr('00000000000000000000000001000000'), '::1');
+  assert.equal(procAddr('00000000000000000000000000000000'), '::');
+  assert.equal(procAddr('0000000000000000FFFF00000100007F'), '::ffff:127.0.0.1');
+  assert.equal(procAddr('000080FE00000000FF270802010000FE'), 'fe80::208:27ff:fe00:1');
+  const rows = parseProcNet([
+    '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode',
+    '   0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4242 1 0000000000000000 100 0 0 10 0',
+    '   1: 0A01A8C0:C350 5DB8D822:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 4243 1 0000000000000000 20 4 30 10 -1',
+    'bozuk satır',
+  ].join('\n'));
+  assert.deepEqual(rows, [
+    { inode: '4242', local: '127.0.0.1', lport: 8080, remote: '0.0.0.0', rport: 0, st: 10 },
+    { inode: '4243', local: '192.168.1.10', lport: 50000, remote: '34.216.184.93', rport: 443, st: 1 },
+  ]);
+  assert.deepEqual(parseNetDev([
+    'Inter-|   Receive                                                |  Transmit',
+    ' face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed',
+    '    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0',
+    '  eth0: 1200 9 0 0 0 0 0 0 340 7 0 0 0 0 0 0',
+    ' wlan0:100 1 0 0 0 0 0 0 60 1 0 0 0 0 0 0',
+  ].join('\n')), { rx: 1300, tx: 400 });
+});
+
+test('netconns: kendi dinleyen soketimiz ve kurulu bağlantımız listelenir; yakalama komutları unsupported', linux, async () => {
+  const p = createProvider();
+  const h = await p.start();
+  assert.equal(h.net, true);
+  const server = net.createServer((s) => s.resume());
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const client = net.connect(port, '127.0.0.1');
+  await new Promise((r) => client.once('connect', r));
+  try {
+    const r = await p.request('netconns', { pid: process.pid });
+    assert.equal(r.capture, false);
+    assert.equal(r.truncated, false);
+    const listen = r.conns.find((c) => c.state === 'listen' && c.lport === port);
+    assert.ok(listen, 'dinleyen soket');
+    assert.deepEqual([listen.pid, listen.proto, listen.v, listen.local, listen.remote, listen.rport], [process.pid, 'tcp', 4, '127.0.0.1', '', 0]);
+    const out = r.conns.find((c) => c.state === 'established' && c.rport === port);
+    assert.ok(out, 'istemci ucu');
+    assert.equal(out.remote, '127.0.0.1');
+    assert.equal(out.lport, client.localPort);
+    assert.ok(r.conns.find((c) => c.state === 'established' && c.lport === port && c.rport === client.localPort), 'sunucu ucu');
+    assert.ok(r.conns.every((c) => c.rx === 0 && c.tx === 0));
+    const viaPids = await p.request('netconns', { pids: [process.pid] });
+    assert.equal(viaPids.conns.length, r.conns.length);
+    const all = await p.request('netconns', { all: true });
+    assert.ok(all.conns.some((c) => c.pid === process.pid && c.lport === port));
+  } finally {
+    client.destroy();
+    await new Promise((r) => server.close(r));
+  }
+  await assert.rejects(p.request('netconns', {}), (e) => e.code === 'bad_request');
+  await assert.rejects(p.request('netconns', { pids: [0] }), (e) => e.code === 'bad_request');
+  const cap = await p.request('netcap', {});
+  assert.deepEqual([cap.capture, cap.reason, cap.ifaces.length], [false, 'unsupported', 0]);
+  await assert.rejects(p.request('netcap', { on: true }), (e) => e.code === 'unsupported');
+  await assert.rejects(p.request('netwatch', { pids: [process.pid] }), (e) => e.code === 'unsupported');
+  await assert.rejects(p.request('netstream', { since: 0 }), (e) => e.code === 'unsupported');
+  await assert.rejects(p.request('volmap', { path: process.execPath }), (e) => e.code === 'unsupported');
 });
 
 test('detail / modules / memmap / readmem / handles kendi sürecimiz üzerinde', linux, async () => {

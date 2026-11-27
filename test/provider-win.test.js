@@ -74,6 +74,39 @@ test('sağlayıcı: anlık görüntü ve ağır sorgular ayrı yardımcı örnek
   }
 });
 
+test('sağlayıcı: ağ komutları anlık görüntüyle aynı örneğe gider; örnek yeniden başlarsa yakalama durumu geri yüklenir', async () => {
+  const downs = [];
+  const p = createProvider({ exe: FAKE, spawnFn });
+  p.onExit((e) => downs.push(e.who));
+  try {
+    const h = await p.start();
+    assert.equal(h.net, true);
+    const cap = await p.request('netcap', { on: true });
+    assert.equal(cap.capture, true);
+    assert.equal(cap.agentPid, h.pid, 'netcap monitor örneğinde');
+    assert.deepEqual((await p.request('netwatch', { pids: [5, 6] })).watch, [5, 6]);
+    const s1 = await p.request('netstream', { since: 0 });
+    assert.equal(s1.agentPid, h.pid);
+    assert.deepEqual(s1.watch, [5, 6]);
+
+    await assert.rejects(p.request('snapshot', { crash: true }), (e) => e.code === 'failed');
+    assert.deepEqual(downs, ['monitor']);
+    const s2 = await p.request('netstream', { since: 0 });
+    assert.notEqual(s2.agentPid, h.pid, 'yeni yardımcı süreci');
+    assert.equal(s2.capture, true, 'yakalama yeniden açıldı');
+    assert.deepEqual(s2.watch, [5, 6], 'izlenen süreçler geri yüklendi');
+
+    // Yakalama kapatıldıktan sonra geri yüklenecek bir şey kalmaz
+    assert.equal((await p.request('netcap', { on: false })).capture, false);
+    await assert.rejects(p.request('snapshot', { crash: true }), (e) => e.code === 'failed');
+    const s3 = await p.request('netstream', { since: 0 });
+    assert.equal(s3.capture, false);
+    assert.deepEqual(s3.watch, []);
+  } finally {
+    p.stop();
+  }
+});
+
 test('sağlayıcı: yardımcı dosyası yoksa unsupported', async () => {
   const p = createProvider({ exe: path.join(__dirname, 'yok', 'mp-agent.exe'), spawnFn });
   await assert.rejects(p.start(), (e) => e.code === 'unsupported');

@@ -3,7 +3,10 @@
 // Linux sağlayıcısı (procfs). Windows yardımcısıyla (mp-agent.exe) AYNI protokolü uygular — bkz. docs/agent-protocol.md.
 // Ürün Windows içindir; bu sağlayıcı arayüzün Linux'ta gerçek süreç verisiyle geliştirilip sınanabilmesi için vardır.
 // Windows'a özgü kavramlar en yakın karşılıklarına eşlenir (çalışma kümesi → RSS, tanıtıcı → dosya tanımlayıcı,
-// küme → dosya sistemi bloğu). Karşılığı olmayan komutlar (capture, gpudetail) `unsupported` döner.
+// küme → dosya sistemi bloğu). Karşılığı olmayan komutlar (capture, gpudetail, volmap) `unsupported` döner.
+// Ağ: bağlantı / port listesi (netconns) ve sistem ağ hızı gerçektir; paket yakalama (netcap açma, netwatch,
+// netstream) yoktur — süreç başına ağ hızı sütunları bu yüzden 0'dır; netcap `reason: "unsupported"` ile
+// yanıtlanır ve arayüz yalnız bağlantı listesini gösterir.
 
 const fs = require('fs');
 const os = require('os');
@@ -86,6 +89,63 @@ function protectOf(perms) {
   return r ? 0x02 : 0x01;
 }
 
+// /proc/net/tcp|udp adres alanı: IPv4 "0100007F" (ana makine bayt sırasında u32), IPv6 dört u32
+function procAddr(hexText) {
+  const b = [];
+  for (let i = 0; i + 8 <= hexText.length; i += 8) {
+    const w = hexText.slice(i, i + 8);
+    b.push(parseInt(w.slice(6, 8), 16), parseInt(w.slice(4, 6), 16), parseInt(w.slice(2, 4), 16), parseInt(w.slice(0, 2), 16));
+  }
+  if (b.length === 4) return b.join('.');
+  if (b.length !== 16) return '';
+  const g = [];
+  for (let i = 0; i < 16; i += 2) g.push((b[i] << 8) | b[i + 1]);
+  if (g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0xffff) return `::ffff:${b.slice(12).join('.')}`;
+  // en uzun sıfır dizisi "::" olur (RFC 5952)
+  let best = -1, bestLen = 1;
+  for (let i = 0; i < 8;) {
+    if (g[i] !== 0) { i++; continue; }
+    let j = i;
+    while (j < 8 && g[j] === 0) j++;
+    if (j - i > bestLen) { best = i; bestLen = j - i; }
+    i = j;
+  }
+  const h = (a) => a.map((x) => x.toString(16)).join(':');
+  return best < 0 ? h(g) : `${h(g.slice(0, best))}::${h(g.slice(best + bestLen))}`;
+}
+const LINUX_TCP_STATES = ['unknown', 'established', 'syn_sent', 'syn_rcvd', 'fin_wait1', 'fin_wait2', 'time_wait', 'closed', 'close_wait', 'last_ack', 'listen', 'closing'];
+
+// "sl local rem st … uid timeout inode" satırları → { inode, local, lport, remote, rport, st }
+function parseProcNet(text) {
+  const rows = [];
+  if (!text) return rows;
+  const lines = text.split('\n');
+  for (let i = 1; i < lines.length; i++) {
+    const f = lines[i].trim().split(/\s+/);
+    if (f.length < 10) continue;
+    const l = f[1].split(':'), r = f[2].split(':');
+    if (l.length !== 2 || r.length !== 2) continue;
+    rows.push({ inode: f[9], local: procAddr(l[0]), lport: parseInt(l[1], 16), remote: procAddr(r[0]), rport: parseInt(r[1], 16), st: parseInt(f[3], 16) });
+  }
+  return rows;
+}
+
+// /proc/net/dev → geri döngü dışındaki arayüzlerin toplam alınan / gönderilen baytı
+function parseNetDev(text) {
+  let rx = 0, tx = 0;
+  if (!text) return { rx, tx };
+  for (const line of text.split('\n')) {
+    const i = line.indexOf(':');
+    if (i < 0) continue;
+    if (line.slice(0, i).trim() === 'lo') continue;
+    const f = line.slice(i + 1).trim().split(/\s+/);
+    if (f.length < 9) continue;
+    rx += +f[0] || 0;
+    tx += +f[8] || 0;
+  }
+  return { rx, tx };
+}
+
 function createProvider() {
   let btimeMs = 0;
   let prev = null; // önceki snapshot: { t, total, busy, procs: Map(pid → { ticks, rd, wr, start }) }
@@ -133,6 +193,7 @@ function createProvider() {
       totalPhys: os.totalmem(),
       gpuCounters: false,
       gpus: [],
+      net: true,
     };
   }
 
@@ -178,7 +239,7 @@ function createProvider() {
       }
       cur.set(pid, { ticks, rd, wr, start });
       ioR += rRate; ioW += wRate;
-      procs.push([pid, st.ppid, st.comm, Math.round(cpu * 100) / 100, st.rss * PAGE, priv, Math.round(rRate), Math.round(wRate), 0, 0, 0, st.threads, handles, start, st.session]);
+      procs.push([pid, st.ppid, st.comm, Math.round(cpu * 100) / 100, st.rss * PAGE, priv, Math.round(rRate), Math.round(wRate), 0, 0, 0, st.threads, handles, start, st.session, 0, 0]);
     }
     // Ebeveyn çocuktan sonra başlamışsa PID yeniden kullanılmıştır → 0
     for (const r of procs) {
@@ -186,7 +247,10 @@ function createProvider() {
       if (r[1] && (!par || par.start > r[13])) r[1] = 0;
     }
     const sysCpu = prev && total > prev.total ? Math.min(100, Math.max(0, ((busy - prev.busy) / (total - prev.total)) * 100)) : 0;
-    prev = { t, total, busy, procs: cur };
+    const dev = parseNetDev(tryText('/proc/net/dev'));
+    const netRx = prev && prev.dev && dt ? Math.max(0, (dev.rx - prev.dev.rx) / dt) : 0;
+    const netTx = prev && prev.dev && dt ? Math.max(0, (dev.tx - prev.dev.tx) / dt) : 0;
+    prev = { t, total, busy, procs: cur, dev };
     return {
       t,
       sys: {
@@ -194,8 +258,9 @@ function createProvider() {
         memTotal: kb(mem.MemTotal), memAvail: kb(mem.MemAvailable),
         commitTotal: kb(mem.Committed_AS), commitLimit: kb(mem.CommitLimit),
         ioRead: Math.round(ioR), ioWrite: Math.round(ioW), gpu: 0, gpuDedicated: 0, gpuShared: 0,
+        netRx: Math.round(netRx), netTx: Math.round(netTx), netCap: false,
       },
-      cols: ['pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session'],
+      cols: ['pid', 'ppid', 'name', 'cpu', 'ws', 'priv', 'ioRead', 'ioWrite', 'gpu', 'gpuDed', 'gpuShr', 'threads', 'handles', 'start', 'session', 'netRx', 'netTx'],
       procs,
     };
   }
@@ -441,6 +506,59 @@ function createProvider() {
     }
   }
 
+  // Soket sahipliği: /proc/<pid>/fd içindeki "socket:[inode]" bağlantıları ↔ /proc/net/* tablolarının inode sütunu
+  function netconns(args) {
+    const pidOk = (v) => Number.isInteger(v) && v > 0;
+    let pids;
+    if (args.all === true) {
+      pids = fs.readdirSync('/proc').filter((n) => n.charCodeAt(0) >= 48 && n.charCodeAt(0) <= 57).map(Number);
+    } else if (Array.isArray(args.pids)) {
+      if (args.pids.length > 256) throw perr('bad_request', "'pids' must be an array of at most 256 process ids");
+      if (!args.pids.every(pidOk)) throw perr('bad_request', "invalid process id in 'pids'");
+      pids = args.pids;
+    } else if (pidOk(args.pid)) {
+      pids = [args.pid];
+    } else {
+      throw perr('bad_request', "missing 'pid', 'pids' or 'all'");
+    }
+    const owner = new Map(); // inode → pid
+    for (const pid of pids) {
+      let fds;
+      try { fds = fs.readdirSync(`/proc/${pid}/fd`); } catch (_) { continue; } // bitti ya da başka kullanıcının
+      for (const fd of fds) {
+        let link;
+        try { link = fs.readlinkSync(`/proc/${pid}/fd/${fd}`); } catch (_) { continue; }
+        if (link.startsWith('socket:[') && !owner.has(link.slice(8, -1))) owner.set(link.slice(8, -1), pid);
+      }
+    }
+    const conns = [];
+    let truncated = false;
+    const add = (file, proto, v) => {
+      if (!owner.size || truncated) return;
+      for (const r of parseProcNet(tryText(file))) {
+        const pid = owner.get(r.inode);
+        if (!pid) continue;
+        if (conns.length >= 2000) { truncated = true; return; }
+        const listen = proto === 'tcp' && r.st === 10;
+        const remote = proto === 'tcp' && !listen;
+        conns.push({
+          pid, proto, v, local: r.local, lport: r.lport, remote: remote ? r.remote : '', rport: remote ? r.rport : 0,
+          state: proto === 'tcp' ? (LINUX_TCP_STATES[r.st] || 'unknown') : 'bound', rx: 0, tx: 0,
+        });
+      }
+    };
+    add('/proc/net/tcp', 'tcp', 4);
+    add('/proc/net/tcp6', 'tcp', 6);
+    add('/proc/net/udp', 'udp', 4);
+    add('/proc/net/udp6', 'udp', 6);
+    return { capture: false, conns, truncated };
+  }
+  const elevated = () => typeof process.getuid === 'function' && process.getuid() === 0;
+  function netcap(args) {
+    if (args.on === true) throw perr('unsupported', 'packet capture is Windows-only');
+    return { capture: false, reason: 'unsupported', elevated: elevated(), ifaces: [], errors: [] };
+  }
+
   function guardControl(pid) {
     if (!Number.isInteger(pid) || pid <= 2 || pid === process.pid) throw perr('bad_request', 'pid not allowed');
   }
@@ -466,7 +584,12 @@ function createProvider() {
     handles,
     filemap,
     readfile,
+    volmap: () => { throw perr('unsupported', 'volume bitmap is Windows-only'); },
     capture: () => { throw perr('unsupported', 'window capture is Windows-only'); },
+    netcap,
+    netconns,
+    netwatch: () => { throw perr('unsupported', 'packet capture is Windows-only'); },
+    netstream: () => { throw perr('unsupported', 'packet capture is Windows-only'); },
     gpudetail: () => { throw perr('unsupported', 'no GPU counters'); },
     kill: ({ pid }) => signal(pid, 'SIGKILL'),
     suspend: ({ pid }) => signal(pid, 'SIGSTOP'),
@@ -495,4 +618,4 @@ function createProvider() {
   };
 }
 
-module.exports = { createProvider, parseStat, protectOf, niceToPriority };
+module.exports = { createProvider, parseStat, protectOf, niceToPriority, procAddr, parseProcNet, parseNetDev };

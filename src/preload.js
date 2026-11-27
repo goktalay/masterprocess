@@ -45,10 +45,13 @@ contextBridge.exposeInMainWorld('api', {
   onSnapshot: on('mon:snapshot'),
   onMonState: on('mon:state'),
 
-  // süreç sorguları (salt okunur): detail | modules | memmap | readmem | handles | gpudetail | filemap | readfile | capture
+  // süreç sorguları (salt okunur): detail | modules | memmap | readmem | handles | gpudetail | filemap | volmap | readfile |
+  // capture; ağ: netcap | netconns | netwatch | netstream
   query: (cmd, args) => ipcRenderer.invoke('proc:query', { ...(args || {}), cmd }),
   // yönetim: kill | killTree | suspend | resume | priority
   action: (cmd, pid, value) => ipcRenderer.invoke('proc:action', { cmd, pid, value }),
   reveal: (file) => ipcRenderer.invoke('proc:reveal', file),
   elevate: () => ipcRenderer.invoke('app:elevate'),
+  // gelen paketlerin yakalanması için güvenlik duvarı kuralı (Windows): status | allow | remove
+  firewall: (op) => ipcRenderer.invoke('net:firewall', op),
 });

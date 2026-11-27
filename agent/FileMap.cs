@@ -2,12 +2,12 @@ using System.Text.Json;
 
 namespace MpAgent;
 
-/// <summary>filemap (dosyanın birimdeki fiziksel yerleşimi) ve readfile komutları.</summary>
+/// <summary>filemap (dosyanın birimdeki fiziksel yerleşimi), volmap (birimin doluluk haritası) ve readfile komutları.</summary>
 internal static unsafe class FileMap
 {
     private const uint FILE_READ_ATTRIBUTES = 0x80, GENERIC_READ = 0x80000000;
     private const uint FILE_SHARE_ALL = 7, OPEN_EXISTING = 3, FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
-    private const uint FSCTL_GET_RETRIEVAL_POINTERS = 0x00090073;
+    private const uint FSCTL_GET_RETRIEVAL_POINTERS = 0x00090073, FSCTL_GET_VOLUME_BITMAP = 0x0009006F;
     private const int MaxExtents = 20000;
 
     private static AgentException OpenError(string what, int err) => err switch
@@ -109,6 +109,7 @@ internal static unsafe class FileMap
             w.WriteString("path", Proto.Clean(path));
             w.WriteString("volume", Proto.Clean(volume));
             w.WriteNumber("clusterSize", clusterSize);
+            w.WriteNumber("sectorSize", bps);
             w.WriteNumber("totalClusters", totalClusters);
             w.WriteNumber("freeClusters", freeClusters);
             w.WriteNumber("size", size);
@@ -128,6 +129,138 @@ internal static unsafe class FileMap
         }
         finally { Native.CloseHandle(h); }
     }
+
+    /// <summary>
+    /// volmap: birimin küme bit eşlemi (FSCTL_GET_VOLUME_BITMAP), "cells" hücreye indirgenmiş doluluk yoğunluğu olarak.
+    /// Her hücre birimin ardışık bir küme aralığıdır; değer o aralıktaki dolu küme oranıdır (0 = boş, 255 = tam dolu).
+    /// </summary>
+    public static void HandleVolMap(JsonElement req, Utf8JsonWriter w)
+    {
+        string path = Proto.ReqString(req, "path");
+        if (path.IndexOf('\0') >= 0) throw AgentException.BadRequest("invalid 'path'");
+        long want = Proto.ReqInt(req, "cells", 4096);
+        if (want < 64 || want > 16384) throw AgentException.BadRequest("'cells' must be between 64 and 16384");
+
+        uint spc = 0, bps = 0, freeClusters = 0, totalClusters = 0;
+        char* vol = stackalloc char[520];
+        fixed (char* pp = path)
+        {
+            if (Native.GetVolumePathNameW(pp, vol, 520) == 0)
+            {
+                int err = Proto.LastError();
+                if (path.StartsWith("\\\\", StringComparison.Ordinal) && !path.StartsWith("\\\\?\\", StringComparison.Ordinal))
+                    throw AgentException.Unsupported("network paths are not supported");
+                throw OpenError("GetVolumePathName", err);
+            }
+        }
+        int vlen = 0;
+        while (vlen < 520 && vol[vlen] != 0) vlen++;
+        string volume = new string(vol, 0, vlen);
+        if (Native.GetDriveTypeW(vol) == 4 /* DRIVE_REMOTE */) throw AgentException.Unsupported("network paths are not supported");
+        // Yalnız sürücü harfli birimler: "C:\" → aygıt yolu "\\.\C:"
+        if (vlen != 3 || volume[1] != ':' || volume[2] != '\\' || !char.IsAsciiLetter(volume[0]))
+            throw AgentException.Unsupported("only drive-letter volumes are supported");
+        if (Native.GetDiskFreeSpaceW(vol, &spc, &bps, &freeClusters, &totalClusters) == 0)
+            throw AgentException.Unsupported($"cannot query volume geometry (win32 {Proto.LastError()})");
+        string device = "\\\\.\\" + volume.Substring(0, 2);
+
+        // Öznitelik erişimi çoğu sürümde yeter; yetmezse okuma erişimiyle (yönetici ister) bir kez daha denenir
+        long total = 0, used = 0;
+        byte[] density = Array.Empty<byte>();
+        int e = 0;
+        if (!ReadBitmap(device, FILE_READ_ATTRIBUTES, (int)want, out total, out used, out density, out e)
+            && !ReadBitmap(device, GENERIC_READ, (int)want, out total, out used, out density, out e))
+        {
+            if (e == Native.ERROR_ACCESS_DENIED || e == Native.ERROR_SHARING_VIOLATION)
+                throw AgentException.Access($"volume bitmap: access denied (win32 {e})");
+            if (e == 1 /* ERROR_INVALID_FUNCTION */ || e == Native.ERROR_NOT_SUPPORTED || e == Native.ERROR_INVALID_PARAMETER)
+                throw AgentException.Unsupported($"file system does not report a volume bitmap (win32 {e})");
+            throw AgentException.Win32("FSCTL_GET_VOLUME_BITMAP", e);
+        }
+
+        w.WriteStartObject();
+        w.WriteString("volume", Proto.Clean(volume));
+        w.WriteNumber("clusterSize", (ulong)spc * bps);
+        w.WriteNumber("sectorSize", bps);
+        w.WriteNumber("totalClusters", total);
+        w.WriteNumber("usedClusters", used);
+        w.WriteNumber("cells", density.Length);
+        w.WriteBase64String("b64", density);
+        w.WriteEndObject();
+    }
+
+    private static bool ReadBitmap(string device, uint access, int cells, out long total, out long used, out byte[] density, out int err)
+    {
+        total = 0; used = 0; density = Array.Empty<byte>(); err = 0;
+        IntPtr h;
+        fixed (char* dp = device)
+            h = Native.CreateFileW(dp, access, FILE_SHARE_ALL, null, OPEN_EXISTING, 0, IntPtr.Zero);
+        if (h == Native.INVALID_HANDLE_VALUE) { err = Proto.LastError(); return false; }
+        const int OutSize = 1 << 20;
+        byte* buf = (byte*)System.Runtime.InteropServices.NativeMemory.Alloc(OutSize);
+        try
+        {
+            long[]? usedIn = null;
+            int cell = 0;
+            long cellEnd = 0, lcn = 0;
+            while (true)
+            {
+                uint returned = 0;
+                int ok = Native.DeviceIoControl(h, FSCTL_GET_VOLUME_BITMAP, &lcn, 8, buf, OutSize, &returned, null);
+                int e = ok != 0 ? 0 : Proto.LastError();
+                if (ok == 0 && e != Native.ERROR_MORE_DATA) { err = e; return false; }
+                if (returned <= 16) break;
+                long start = *(long*)buf, size = *(long*)(buf + 8); // StartingLcn (8'in katına yuvarlanmış olabilir), kalan küme sayısı
+                if (start < 0 || size <= 0) break;
+                if (usedIn == null)
+                {
+                    total = start + size;
+                    if (cells > total) cells = (int)total;
+                    usedIn = new long[cells];
+                    cell = 0;
+                    cellEnd = CellEnd(0, total, cells);
+                }
+                long bits = Math.Min(Math.Min(size, total - start), (long)(returned - 16) * 8);
+                if (bits <= 0) break;
+                byte* p = buf + 16;
+                for (long k = 0; k < bits;)
+                {
+                    long at = start + k;
+                    while (at >= cellEnd && cell < cells - 1) { cell++; cellEnd = CellEnd(cell, total, cells); }
+                    if ((k & 7) == 0 && k + 8 <= bits && at + 8 <= cellEnd)
+                    {
+                        usedIn[cell] += System.Numerics.BitOperations.PopCount((uint)p[k >> 3]); // bayt bütünüyle aynı hücrede
+                        k += 8;
+                        continue;
+                    }
+                    if ((p[k >> 3] & (1 << (int)(k & 7))) != 0) usedIn[cell]++;
+                    k++;
+                }
+                lcn = start + bits;
+                if (ok != 0 || lcn >= total) break;
+            }
+            if (usedIn == null) { err = Native.ERROR_NOT_SUPPORTED; return false; }
+            density = new byte[cells];
+            long prevEnd = 0;
+            for (int c = 0; c < cells; c++)
+            {
+                long end = CellEnd(c, total, cells), n = end - prevEnd;
+                prevEnd = end;
+                used += usedIn[c];
+                if (n <= 0 || usedIn[c] <= 0) continue;
+                density[c] = (byte)Math.Clamp((usedIn[c] * 255 + n / 2) / n, 1, 255); // dolu kümesi olan hücre en az 1
+            }
+            return true;
+        }
+        finally
+        {
+            System.Runtime.InteropServices.NativeMemory.Free(buf);
+            Native.CloseHandle(h);
+        }
+    }
+
+    /// <summary>c numaralı hücrenin bittiği küme (dışlayan): floor(lcn * cells / total) == c ⇔ lcn &lt; CellEnd(c).</summary>
+    private static long CellEnd(int c, long total, int cells) => c >= cells - 1 ? total : ((long)(c + 1) * total + cells - 1) / cells;
 
     public static void HandleReadFile(JsonElement req, Utf8JsonWriter w)
     {

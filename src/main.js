@@ -2,8 +2,9 @@
 
 // Master Process — ana süreç. Bu bilgisayarda çalışan süreçleri izler: süreç verisini bir sağlayıcıdan alır
 // (Windows'ta yerel yardımcı mp-agent.exe, Linux'ta procfs; sözleşme docs/agent-protocol.md), örnek tarihçesini ve
-// başlama/bitme olay günlüğünü tutar, arayüze iletir. Süreç listesi, dosya yolları, bellek içeriği, pencere görüntüleri
-// ve olay günlüğü yalnız bu bilgisayarda kalır; Mastertool hesabıyla yalnız ayarlar uçtan uca şifreli senkronlanır.
+// başlama/bitme olay günlüğünü tutar, arayüze iletir. Süreç listesi, dosya yolları, bellek içeriği, pencere görüntüleri,
+// yakalanan ağ verisi ve olay günlüğü yalnız bu bilgisayarda kalır (ağ verisi diske de yazılmaz: yalnız bellekte,
+// sınırlı bir tamponda durur); Mastertool hesabıyla yalnız ayarlar uçtan uca şifreli senkronlanır.
 
 const { app, BrowserWindow, ipcMain, safeStorage, shell, clipboard, nativeTheme, Tray, Menu, nativeImage, Notification } = require('electron');
 const path = require('path');
@@ -21,7 +22,8 @@ const APP_NAME = 'Master Process';
 const APP_CODE = 'mp';
 const LOGIN_ITEM = 'MastertoolMasterProcess';
 const REFRESH_CHOICES = [1000, 2000, 5000];
-const SORT_KEYS = ['name', 'pid', 'cpu', 'ws', 'priv', 'io', 'gpu', 'threads', 'handles', 'start'];
+const SORT_KEYS = ['name', 'pid', 'cpu', 'ws', 'priv', 'io', 'net', 'gpu', 'threads', 'handles', 'start'];
+const FIREWALL_RULE = 'Master Process Network Monitor'; // build/installer.nsh kaldırırken aynı adı siler
 const HISTORY_CAPACITY = 300; // süreç başına tutulan örnek (1 sn aralıkla 5 dk)
 const EVENTS_MAX = 2000; // bellekte tutulan olay
 const EVENTS_DAYS = 7; // diskte tutulan gün
@@ -569,6 +571,12 @@ function main() {
     }
   }
 
+  // Ağ sorgularının süreç listesi: en çok 256 PID. `pid` tek süreç için kısa yoldur.
+  function pidList(req) {
+    const list = Array.isArray(req.pids) ? req.pids : req.pid !== undefined ? [req.pid] : null;
+    return list && list.length <= 256 && list.every((p) => isPid(p) && p > 0) ? list : null;
+  }
+
   // Salt okunur sorgular. Yol / pencere argümanları yalnız sağlayıcının daha önce döndürdüğü değerler olabilir.
   ipcMain.handle('proc:query', async (_e, req) => {
     const { cmd, pid, addr, len, offset, hwnd, maxW } = req || {};
@@ -616,6 +624,12 @@ function main() {
         if (!knownPaths.has(file)) return fail('bad_request', 'unknown path');
         return ask('filemap', { path: file }, 30000);
       }
+      case 'volmap': {
+        if (!knownPaths.has(file)) return fail('bad_request', 'unknown path');
+        const cells = req.cells === undefined ? 4096 : req.cells;
+        if (!Number.isInteger(cells) || cells < 64 || cells > 16384) return fail('bad_request');
+        return ask('volmap', { path: file, cells }, 60000);
+      }
       case 'readfile': {
         if (!knownPaths.has(file)) return fail('bad_request', 'unknown path');
         if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(len) || len < 1 || len > 65536) return fail('bad_request');
@@ -626,9 +640,61 @@ function main() {
         const w = Number.isInteger(maxW) ? Math.min(3840, Math.max(64, maxW)) : 1280;
         return ask('capture', { hwnd, maxW: w }, 20000);
       }
+      // Ağ: yakalama yalnız arayüz açıkça istediğinde açılır; içerik yalnız izlenen süreçler için tutulur
+      case 'netcap': {
+        if (req.on !== undefined && typeof req.on !== 'boolean') return fail('bad_request');
+        return ask('netcap', req.on === undefined ? {} : { on: req.on }, 20000);
+      }
+      case 'netconns': {
+        if (req.all === true) return ask('netconns', { all: true }, 15000);
+        const pids = pidList(req);
+        if (!pids || !pids.length) return fail('bad_request');
+        return ask('netconns', { pids }, 15000);
+      }
+      case 'netwatch': {
+        const pids = pidList(req);
+        if (!pids) return fail('bad_request');
+        return ask('netwatch', { pids, reset: req.reset === true }, 15000);
+      }
+      case 'netstream': {
+        const since = req.since === undefined ? 0 : req.since;
+        const max = req.max === undefined ? 262144 : req.max;
+        if (!Number.isSafeInteger(since) || since < 0 || !Number.isInteger(max) || max < 4096 || max > 1048576) return fail('bad_request');
+        return ask('netstream', { since, max }, 15000);
+      }
       default:
         return fail('bad_request', 'unknown command');
     }
+  });
+
+  // Güvenlik duvarı kuralı (Windows). Ham soket, dışarıdan GELEN paketleri ancak yardımcıya gelen bağlantı izni
+  // varsa görür; kural yalnız kullanıcının açık isteğiyle eklenir ve kaldırılır. Yardımcı port dinlemez: kural ona
+  // bağlantı kurulmasını sağlamaz, yalnız gelen paketlerin kopyasının ham sokete ulaşmasını sağlar.
+  const netsh = (args) => new Promise((resolve) => {
+    execFile('netsh.exe', args, { windowsHide: true, encoding: 'latin1', timeout: 15000 }, (err, stdout) => {
+      resolve({ code: err ? (Number.isInteger(err.code) ? err.code : -1) : 0, out: String(stdout || '') });
+    });
+  });
+  // netsh çıktısı konsol kod sayfasındadır: ASCII dışı her kesit iki tarafta da tek işarete indirgenir
+  const fwText = (s) => String(s).toLowerCase().replace(/[^\x20-\x7e]+/g, '?');
+  async function firewallState() {
+    const exe = provider.exe;
+    const r = await netsh(['advfirewall', 'firewall', 'show', 'rule', `name=${FIREWALL_RULE}`, 'verbose']);
+    return { rule: r.code === 0 && fwText(r.out).includes(fwText(exe)), elevated: !!(hello && hello.elevated), name: FIREWALL_RULE, program: exe };
+  }
+  ipcMain.handle('net:firewall', async (_e, op) => {
+    if (process.platform !== 'win32' || !provider || !provider.exe || monStopped) return fail('unsupported');
+    if (op === 'status') return { ok: true, data: await firewallState() };
+    if (op !== 'allow' && op !== 'remove') return fail('bad_request');
+    if (!hello || !hello.elevated) return fail('access', 'administrator rights are required');
+    // Eski kural (başka bir kurulum yolunu gösteriyor olabilir) önce silinir; yoksa netsh hata döndürür, sorun değil
+    await netsh(['advfirewall', 'firewall', 'delete', 'rule', `name=${FIREWALL_RULE}`]);
+    if (op === 'allow') {
+      const r = await netsh(['advfirewall', 'firewall', 'add', 'rule', `name=${FIREWALL_RULE}`, 'dir=in', 'action=allow',
+        `program=${provider.exe}`, 'enable=yes', 'profile=any']);
+      if (r.code !== 0) return fail('failed', r.out.replace(/[^\x20-\x7e]+/g, ' ').trim().slice(0, 300));
+    }
+    return { ok: true, data: await firewallState() };
   });
 
   // Yönetim eylemleri (yalnız bu bilgisayardaki süreçler; onay kutusu arayüzde)

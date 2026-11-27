@@ -1,11 +1,11 @@
 'use strict';
 
-// Örnek tarihçesi: süreç başına ve sistem geneli için sabit boyutlu halka tamponlar (CPU %, bellek, G/Ç, GPU %).
+// Örnek tarihçesi: süreç başına ve sistem geneli için sabit boyutlu halka tamponlar (CPU %, bellek, G/Ç, GPU %, ağ).
 // Ana süreçte tutulur (pencere kapansa da birikir); arayüz açılışta tümünü alır (dump → load), sonra her anlık
 // görüntüyü kendi kopyasına ekler. Süreç başlama/bitme olaylarını da buradan üretir.
 (function (root) {
-  const METRICS = ['cpu', 'ws', 'io', 'gpu'];
-  const SYS_METRICS = ['cpu', 'mem', 'io', 'gpu'];
+  const METRICS = ['cpu', 'ws', 'io', 'gpu', 'net', 'netRx', 'netTx'];
+  const SYS_METRICS = ['cpu', 'mem', 'io', 'gpu', 'net', 'netRx', 'netTx'];
 
   function ring(capacity) {
     return { buf: new Float32Array(capacity), n: 0, head: 0 };
@@ -39,10 +39,13 @@
 
     function sysSample(s) {
       const memUsed = s.memTotal ? ((s.memTotal - s.memAvail) / s.memTotal) * 100 : 0;
-      return { cpu: s.cpu || 0, mem: memUsed, io: (s.ioRead || 0) + (s.ioWrite || 0), gpu: s.gpu || 0 };
+      return {
+        cpu: s.cpu || 0, mem: memUsed, io: (s.ioRead || 0) + (s.ioWrite || 0), gpu: s.gpu || 0,
+        net: (s.netRx || 0) + (s.netTx || 0), netRx: s.netRx || 0, netTx: s.netTx || 0,
+      };
     }
 
-    // snap: { t, sys, procs: [{ key, pid, name, start, cpu, ws, io, gpu, ... }] }
+    // snap: { t, sys, procs: [{ key, pid, name, start, cpu, ws, io, gpu, net, netRx, netTx, ... }] }
     // Dönen: { started: [...], exited: [...] } — ilk çağrıda ikisi de boştur (o an çalışanlar "başladı" sayılmaz).
     function push(snap) {
       const t = snap.t || Date.now();
@@ -70,10 +73,7 @@
         h.sumCpu += p.cpu || 0;
         if ((p.cpu || 0) > h.peakCpu) h.peakCpu = p.cpu || 0;
         if ((p.ws || 0) > h.peakWs) h.peakWs = p.ws || 0;
-        ringPush(h.r.cpu, p.cpu || 0);
-        ringPush(h.r.ws, p.ws || 0);
-        ringPush(h.r.io, p.io || 0);
-        ringPush(h.r.gpu, p.gpu || 0);
+        for (const m of METRICS) ringPush(h.r[m], p[m] || 0);
       }
       for (const [key, h] of procs) {
         if (seen.has(key)) continue;
@@ -140,11 +140,14 @@
       times.n = 0; times.head = 0;
       const tsrc = tv.length > capacity ? tv.slice(tv.length - capacity) : tv;
       for (let i = 0; i < tsrc.length; i++) { times.buf[times.head] = tsrc[i]; times.head = (times.head + 1) % capacity; times.n++; }
-      for (const m of SYS_METRICS) sys[m] = ringFrom((d.sys && d.sys[m]) || [], capacity);
+      const slen = ((d.sys && d.sys.cpu) || []).length;
+      for (const m of SYS_METRICS) sys[m] = ringFrom((d.sys && d.sys[m]) || new Float32Array(slen), capacity);
       for (const key of Object.keys(d.procs)) {
         const o = d.procs[key];
         const h = { pid: o.pid, name: o.name, start: o.start, first: o.first, last: o.last, peakCpu: o.peakCpu || 0, peakWs: o.peakWs || 0, sumCpu: o.sumCpu || 0, samples: o.samples || 0, r: {} };
-        for (const m of METRICS) h.r[m] = ringFrom(o[m] || [], capacity);
+        // Eski bir dökümde bulunmayan seri (ör. ağ) diğerleriyle aynı uzunlukta sıfırla doldurulur: seriler hizalı kalır
+        const len = (o.cpu || []).length;
+        for (const m of METRICS) h.r[m] = ringFrom(o[m] || new Float32Array(len), capacity);
         procs.set(key, h);
       }
       primed = !!d.primed;

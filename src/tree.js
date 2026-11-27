@@ -16,6 +16,7 @@
       for (let c = 0; c < cols.length; c++) o[cols[c]] = r[c];
       o.key = keyOf(o);
       o.io = (o.ioRead || 0) + (o.ioWrite || 0);
+      o.net = (o.netRx || 0) + (o.netTx || 0);
       out[i] = o;
     }
     return out;
@@ -44,10 +45,33 @@
     return (a, b) => d * ((a.p[key] || 0) - (b.p[key] || 0)) || a.p.pid - b.p.pid;
   }
 
-  // Ağaç görünümü: kardeşler kendi aralarında sıralanır. collapsed: daraltılmış düğüm anahtarları (Set).
+  // Yük sütunları: ağaç görünümünde bir dal, alt süreçleriyle birlikte toplam yüküne göre sıralanır.
+  const SUM_KEYS = new Set(['cpu', 'ws', 'priv', 'io', 'net', 'gpu', 'threads', 'handles']);
+
+  // Her düğümün alt ağaç toplamı (kendisi dahil), tek geçişte. Dönen: Map(düğüm → toplam).
+  function subtreeTotals(roots, key) {
+    const totals = new Map();
+    const walk = (n, depth) => {
+      let s = n.p[key] || 0;
+      if (depth <= 4096) for (const c of n.children) s += walk(c, depth + 1);
+      totals.set(n, s);
+      return s;
+    };
+    for (const r of roots) walk(r, 0);
+    return totals;
+  }
+
+  // Ağaç görünümü: kardeşler kendi aralarında sıralanır; yük sütunlarında (SUM_KEYS) ölçü dalın toplamıdır, böylece
+  // en yüklü ana süreç — yükü alt süreçlerinden gelse bile — üste çıkar. Ad, PID ve başlangıç düğümün kendi değeriyle
+  // sıralanır. collapsed: daraltılmış düğüm anahtarları (Set).
   // Çıkış satırı: { p, depth, hasChildren, collapsed, guides } — guides: her derinlikte dikey kılavuz çizgisi sürüyor mu.
   function flattenTree(roots, { sortKey = 'name', sortDir = 1, collapsed = new Set() } = {}) {
-    const cmp = comparator(sortKey, sortDir);
+    let cmp = comparator(sortKey, sortDir);
+    if (SUM_KEYS.has(sortKey)) {
+      const totals = subtreeTotals(roots, sortKey);
+      const d = sortDir < 0 ? -1 : 1;
+      cmp = (a, b) => d * ((totals.get(a) || 0) - (totals.get(b) || 0)) || a.p.pid - b.p.pid;
+    }
     const out = [];
     const walk = (nodes, depth, guides) => {
       const list = nodes.slice().sort(cmp);
@@ -119,7 +143,7 @@
     return sum;
   }
 
-  const api = { keyOf, rowsToObjects, buildTree, flattenTree, flattenList, filterProcs, subtreePids, subtreeSum };
+  const api = { keyOf, rowsToObjects, buildTree, flattenTree, flattenList, filterProcs, subtreePids, subtreeSum, subtreeTotals, SUM_KEYS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TREE = api;
 })(typeof self !== 'undefined' ? self : this);

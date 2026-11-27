@@ -10,7 +10,10 @@ Windows süreç yöneticisi; Mastertool ailesinin Electron kalıbıyla yazılmı
   Protokol değişikliği `docs/agent-protocol.md`, `agent/Protocol.cs`, `src/provider-linux.js` ve
   `test-fixtures/fake-agent.js` içinde birlikte yapılır.
 - Yardımcı (`agent/`) NativeAOT derlenir: yansıma ve dinamik kod yok; JSON elle yazılır.
-- Yardımcı ağa çıkmaz, dosya yazmaz. Süreç listesi, yollar, pencere görüntüleri, bellek içeriği hesaba gönderilmez.
+- Yardımcı bağlantı kurmaz, veri göndermez, dosya yazmaz. Ağ izleme yalnız kullanıcı açınca çalışır, yalnız yerel
+  arayüzleri okur; yakalanan içerik bellekte kalır. Süreç listesi, yollar, pencere görüntüleri, bellek ve ağ içeriği hesaba
+  gönderilmez. Yakalanan HTML / SVG asla çalıştırılmaz (yalnız kaynak); güvenlik duvarı kuralı yalnız kullanıcının açık
+  eylemiyle eklenir; TLS çözülmez.
 - Sınamalarda ve ekran görüntülerinde veri taklit edilmez; eylemler (askıya al, sonlandır) yalnız betiğin başlattığı
   `test-fixtures/target.js` süreci üzerinde denenir.
 - Renkler ve ölçüler `src/renderer/mastertool.css` değişkenlerinden alınır; gece ve gündüz teması birlikte denetlenir.

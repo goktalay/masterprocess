@@ -1,7 +1,7 @@
 'use strict';
 
 // Tuval çizimleri: tablo satırındaki küçük çizgi grafik, ayrıntı panelindeki zaman grafiği, bellek yerleşim
-// haritası ve disk küme haritası. Hepsi verilen veriyi çizer; veri toplamaz.
+// haritası, disk küme haritası ve disk yüzeyi haritası. Hepsi verilen veriyi çizer; veri toplamaz.
 const CHARTS = (() => {
   let palette = null;
   function colors() {
@@ -11,6 +11,7 @@ const CHARTS = (() => {
     palette = {
       cpu: v('--m-cpu', '#22d3ee'), ws: v('--m-mem', '#a78bfa'), mem: v('--m-mem', '#a78bfa'),
       io: v('--m-io', '#34d399'), gpu: v('--m-gpu', '#f59e0b'),
+      net: v('--m-net', '#f472b6'), netUp: v('--m-net-up', '#818cf8'),
       image: v('--r-image', '#a78bfa'), mapped: v('--r-mapped', '#60a5fa'), private: v('--r-private', '#34d399'),
       grid: v('--border', 'rgba(255,255,255,.08)'), text: v('--text-3', '#64748b'), text2: v('--text-2', '#94a3b8'),
       surface: v('--surface-2', '#1e293b'), bg: v('--bg-2', '#0f172a'), accent: v('--accent', '#22d3ee'),
@@ -235,6 +236,87 @@ const CHARTS = (() => {
     ctx.strokeRect(0.5, bandH + 10.5, w - 1, bandH - 1);
   }
 
+  // --- Disk yüzeyi haritası --------------------------------------------------------
+  // Birim eşit küme aralıklarına bölünür; her kare bir aralıktır (soldan sağa, yukarıdan aşağıya = birimin
+  // başından sonuna). Kare tonu o aralığın doluluk oranıdır (vol: birim bit eşleminden); dosyanın parçalarının
+  // düştüğü kareler vurgulanır. vol yoksa yalnız dosyanın kareleri çizilir, doluluk gösterilmez.
+  function diskMap(canvas, fm, { vol = null, cell = 8, selected = -1 } = {}) {
+    const { w, h } = sizeOf(canvas);
+    const ctx = prep(canvas, w, h);
+    const c = colors();
+    const cols = Math.max(1, Math.floor(w / cell));
+    const rows = Math.max(1, Math.floor(h / cell));
+    const cells = cols * rows;
+    const total = Math.max(1, fm.totalClusters || 1);
+    const ext = fm.extents || [];
+    const cellOf = (lcn) => Math.max(0, Math.min(cells - 1, Math.floor((lcn / total) * cells)));
+
+    // Doluluk: bit eşlemi hücreleri ızgaraya yeniden örneklenir (kareye düşen hücrelerin ortalaması)
+    let used = null;
+    if (vol && vol.bytes && vol.bytes.length) {
+      const V = vol.bytes.length;
+      used = new Float32Array(cells);
+      for (let k = 0; k < cells; k++) {
+        const a = Math.min(V - 1, Math.floor((k * V) / cells));
+        const b = Math.max(a + 1, Math.min(V, Math.ceil(((k + 1) * V) / cells)));
+        let sum = 0;
+        for (let i = a; i < b; i++) sum += vol.bytes[i];
+        used[k] = sum / ((b - a) * 255);
+      }
+    }
+
+    // Kare → o kareye düşen ilk parça; seçili parçanın kareleri ayrıca işaretlenir
+    const first = new Int32Array(cells).fill(-1);
+    const picked = new Uint8Array(cells);
+    for (let i = 0; i < ext.length; i++) {
+      const a = cellOf(ext[i][0]);
+      const b = cellOf(ext[i][0] + Math.max(1, ext[i][1]) - 1);
+      for (let k = a; k <= b; k++) {
+        if (first[k] < 0) first[k] = i;
+        if (i === selected) picked[k] = 1;
+      }
+    }
+
+    const idle = alpha(c.text2, 0.1);
+    for (let k = 0; k < cells; k++) {
+      const x = (k % cols) * cell, y = Math.floor(k / cols) * cell;
+      ctx.fillStyle = c.bg;
+      ctx.fillRect(x, y, cell - 1, cell - 1);
+      if (first[k] >= 0) ctx.fillStyle = first[k] % 2 ? c.io : c.accent;
+      else if (!used) ctx.fillStyle = idle;
+      else if (used[k] > 0) ctx.fillStyle = alpha(c.text2, 0.16 + 0.5 * used[k]);
+      else continue;
+      ctx.fillRect(x, y, cell - 1, cell - 1);
+    }
+    ctx.strokeStyle = c.strong;
+    ctx.lineWidth = 1;
+    for (let k = 0; k < cells; k++) {
+      if (picked[k]) ctx.strokeRect((k % cols) * cell - 0.5, Math.floor(k / cols) * cell - 0.5, cell, cell);
+    }
+
+    return {
+      cells, cols, rows,
+      perCell: total / cells,
+      at(x, y) {
+        const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
+        if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) return null;
+        const k = cy * cols + cx;
+        const lcn0 = Math.floor((k * total) / cells);
+        const lcn1 = Math.max(lcn0, Math.ceil(((k + 1) * total) / cells) - 1);
+        const frags = [];
+        let fragCount = 0;
+        if (first[k] >= 0) {
+          for (let i = first[k]; i < ext.length; i++) {
+            if (cellOf(ext[i][0]) > k || cellOf(ext[i][0] + Math.max(1, ext[i][1]) - 1) < k) continue;
+            fragCount++;
+            if (frags.length < 6) frags.push(i);
+          }
+        }
+        return { k, lcn0, lcn1, used: used ? used[k] : null, frags, fragCount };
+      },
+    };
+  }
+
   // Pencere görüntüsü: BGRA baytlarını tuvale yazar (tuval w×h piksel olur; CSS ile ölçeklenir).
   function bgra(canvas, bytes, w, h) {
     canvas.width = w;
@@ -249,5 +331,5 @@ const CHARTS = (() => {
     ctx.putImageData(img, 0, 0);
   }
 
-  return { colors, resetColors, spark, line, memModel, memMap, clusterMap, bgra, alpha };
+  return { colors, resetColors, spark, line, memModel, memMap, clusterMap, diskMap, bgra, alpha };
 })();

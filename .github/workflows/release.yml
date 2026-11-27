@@ -68,6 +68,11 @@ jobs:
         shell: pwsh
         run: ./scripts/agent-session-test.ps1 -Agent agent-out\mp-agent.exe
 
+      # Betik kendi trafiğini üretir; koşucuda yardımcıya gelen izin kuralı olmadığından dış GELEN veri uyarı sayılır.
+      - name: Yardımcı — ağ sınaması
+        shell: pwsh
+        run: ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -InboundOptional
+
       - name: Exe'leri derle
         run: npx electron-builder --win --publish never
         env:

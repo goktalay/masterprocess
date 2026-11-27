@@ -17,10 +17,12 @@ test('i18n: kullanılan anahtarlar sözlükte var', () => {
     for (const m of src.matchAll(/'((?:auth|keys|col|err)\.[\w.]+)'/g)) used.add(m[1]);
   }
   for (const k of ['idle', 'below', 'normal', 'above', 'high', 'realtime']) used.add('prio.' + k);
-  for (const k of ['general', 'perf', 'memory', 'disk', 'gpu', 'window', 'modules', 'threads', 'history']) used.add('tab.' + k);
+  for (const k of ['general', 'perf', 'memory', 'disk', 'gpu', 'network', 'window', 'modules', 'threads', 'history']) used.add('tab.' + k);
   for (const k of ['overview', 'history']) used.add('systab.' + k);
   for (const k of ['run', 'ready', 'wait', 'other']) used.add('thr.st.' + k);
-  for (const k of ['name', 'pid', 'cpu', 'mem', 'io', 'gpu', 'threads', 'handles']) { used.add('col.' + k); used.add('col.' + k + 'Hint'); }
+  for (const k of ['name', 'pid', 'cpu', 'mem', 'io', 'gpu', 'net', 'threads', 'handles']) { used.add('col.' + k); used.add('col.' + k + 'Hint'); }
+  // Yardımcının döndürebildiği bağlantı durumları (agent/NetTables.cs)
+  for (const k of ['established', 'listen', 'bound', 'closed', 'active', 'ended', 'syn_sent', 'syn_rcvd', 'fin_wait1', 'fin_wait2', 'close_wait', 'closing', 'last_ack', 'time_wait', 'delete_tcb', 'unknown']) used.add('net.state.' + k);
   // Sağlayıcıların ve ana sürecin döndürebildiği tüm hata kodları
   for (const k of ['access', 'gone', 'bad_request', 'unsupported', 'timeout', 'failed', 'cancelled']) used.add('err.' + k);
   const missing = [...used].filter((k) => !k.endsWith('.') && !(k in STRINGS.en));

@@ -6,13 +6,18 @@
 // İki yardımcı örneği kullanılır: "monitor" yalnız periyodik anlık görüntüyü (ve aynı sayaç durumuna dayanan GPU
 // ayrıntısını) yanıtlar; "query" seçili sürecin ağır sorgularını (bellek haritası, tanıtıcılar, pencere görüntüsü…)
 // yanıtlar. Yardımcı istekleri sırayla işlediği için tek örnekte birkaç saniyelik bir sorgu canlı listeyi dondururdu.
+//
+// Ağ komutları (netcap, netconns, netwatch, netstream) monitor örneğine gider: paket yakalama durumu ve süreç başına
+// ağ sayaçları, anlık görüntüdeki ağ sütunlarını da besleyen aynı örnekte tutulur. Bu örnek yeniden başlarsa istenen
+// yakalama durumu (açık / izlenen süreçler) sonraki istekten önce geri yüklenir; akış sıra numaraları ise sıfırdan
+// başlar (arayüz `next` değerinin geriye gittiğini görünce baştan ister).
 
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
 const DEFAULT_TIMEOUT = 30000;
-const MONITOR_CMDS = new Set(['hello', 'snapshot', 'gpudetail']);
+const MONITOR_CMDS = new Set(['hello', 'snapshot', 'gpudetail', 'netcap', 'netconns', 'netwatch', 'netstream']);
 const MAX_RESTARTS = 5; // RESTART_WINDOW içinde
 const RESTART_WINDOW = 60000;
 
@@ -127,8 +132,33 @@ function createAgentClient({ exe, args = [], name = 'agent', onDown = () => {}, 
 function createProvider({ exe = agentPath(), spawnFn } = {}) {
   const exitCbs = [];
   const notify = (who) => (why) => { for (const cb of exitCbs) { try { cb({ who, why }); } catch (_) { /* dinleyici hatası */ } } };
-  const monitor = createAgentClient({ exe, name: 'monitor', onDown: notify('monitor'), spawnFn });
+  // İstenen ağ durumu: monitor örneği yeniden başladığında geri yüklenir
+  const net = { on: false, watch: null, restore: false };
+  const monitor = createAgentClient({
+    exe,
+    name: 'monitor',
+    onDown: (why) => { net.restore = net.on || !!net.watch; notify('monitor')(why); },
+    spawnFn,
+  });
   const query = createAgentClient({ exe, name: 'query', onDown: notify('query'), spawnFn });
+
+  function monitorRequest(cmd, args, timeout) {
+    if (net.restore) {
+      // İstekler stdin'e sırayla yazılır: geri yükleme, asıl istekten önce işlenir
+      net.restore = false;
+      if (net.on) monitor.request('netcap', { on: true }, 15000).catch(() => {});
+      if (net.watch) monitor.request('netwatch', { pids: net.watch }, 15000).catch(() => {});
+    }
+    const p = monitor.request(cmd, args, timeout);
+    if (cmd === 'netcap' && args && typeof args.on === 'boolean') {
+      const on = args.on;
+      p.then((r) => { net.on = on && !!(r && r.capture); if (!net.on) net.watch = null; }, () => {});
+    } else if (cmd === 'netwatch') {
+      const pids = args && Array.isArray(args.pids) ? args.pids.slice() : args && args.pid ? [args.pid] : [];
+      p.then(() => { net.watch = pids.length ? pids : null; }, () => {});
+    }
+    return p;
+  }
 
   return {
     kind: 'win',
@@ -137,7 +167,7 @@ function createProvider({ exe = agentPath(), spawnFn } = {}) {
       if (!fs.existsSync(exe)) return Promise.reject(perr('unsupported', `helper not found: ${exe}`));
       return monitor.request('hello', {}, 15000);
     },
-    request: (cmd, args, timeout) => (MONITOR_CMDS.has(cmd) ? monitor : query).request(cmd, args, timeout),
+    request: (cmd, args, timeout) => (MONITOR_CMDS.has(cmd) ? monitorRequest(cmd, args, timeout) : query.request(cmd, args, timeout)),
     stop: () => { monitor.stop(); query.stop(); },
     onExit: (cb) => { exitCbs.push(cb); },
   };

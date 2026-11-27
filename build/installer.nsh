@@ -61,6 +61,9 @@
 ; klasörü kalmasın. RMDir /r değil: yalnız boş klasörleri siler, diğer uygulamalara dokunmaz.
 ; Kaldırıcının çalışma klasörü kurulum klasörü olduğundan önce oradan çıkılır (aksi halde silinemez).
 !macro customUnInstall
+  ; Ağ izleme için kullanıcının uygulamadan eklemiş olabileceği gelen izin kuralı (yoksa komut sessizce başarısız olur).
+  nsExec::Exec 'netsh advfirewall firewall delete rule name="Master Process Network Monitor"'
+  Pop $R0
   SetOutPath "$TEMP"
   RMDir "$INSTDIR"
   ${GetParent} "$INSTDIR" $R0

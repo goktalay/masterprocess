@@ -144,6 +144,20 @@ let cleanup = async () => {};
       await main.waitForSelector('.d-body [data-r="map"] .chips', { timeout: 20000 }).catch(() => {});
       const map = await main.evaluate(() => { const m = document.querySelector('.d-body [data-r="map"]'); const chips = m ? [...m.querySelectorAll('.chip')].map((c) => c.textContent.trim().replace(/\s+/g, ' ')).join(' · ') : ''; return (m && m.querySelector('.cm-canvas') ? 'yerleşim haritası çizildi — ' : 'harita yok — ') + (chips || (m ? m.textContent.trim().slice(0, 110) : '')); });
       check(/çizildi/.test(map), `disk: ${map}`);
+      // Disk yüzeyi: birimin küme haritası üzerinde dosyanın parçaları + parça listesi
+      await main.waitForSelector('.d-body .dm-canvas', { timeout: 20000 }).catch(() => {});
+      await main.waitForTimeout(1500);
+      const dm = await main.evaluate(() => {
+        const c = document.querySelector('.d-body .dm-canvas');
+        if (!c || !c.width || !c.height) return null;
+        const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const colors = new Set();
+        for (let i = 0; i < px.length && colors.size < 8; i += 4 * 7) if (px[i + 3]) colors.add((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]);
+        const box = c.closest('.dm');
+        const txt = (q) => { const e = box.querySelector(q); return e ? e.textContent.trim().replace(/\s+/g, ' ') : ''; };
+        return { colors: colors.size, frags: box.querySelectorAll('.vl-row').length, scale: txt('[data-r="scale"]'), geo: [...box.querySelectorAll('[data-r="geo"] .chip')].map((x) => x.textContent.trim().replace(/\s+/g, ' ')).join(' · ') };
+      });
+      check(dm && dm.colors >= 2 && dm.frags >= 1, dm ? `disk yüzeyi: çizildi (${dm.colors}+ renk), ${dm.frags} parça satırı — ${dm.scale}${dm.geo ? ` — ${dm.geo}` : ''}` : 'disk yüzeyi: çizilmedi');
     }
     await main.waitForTimeout(600);
     await shot('e2e-05-disk');
@@ -176,6 +190,93 @@ let cleanup = async () => {};
   await tab('threads', 2500);
   check(await main.evaluate(() => document.querySelectorAll('.d-body .vl-row').length >= 1), 'iş parçacıkları: listelendi');
   await shot('e2e-08-is-parcaciklari');
+
+  // Ağ: hedef, alt sürecindeki sunucuyla 127.0.0.1 üzerinden gerçekten HTTP konuşur (JSON, PNG, HTML). Yakalama yalnız
+  // Windows'ta vardır; diğer platformlarda bağlantı listesi ve "desteklenmiyor" bildirimi denetlenir.
+  await tab('network', 600);
+  await main.waitForSelector('.d-body .nt-cap .nt-capline', { timeout: 15000 }).catch(() => bad('ağ: yakalama durumu gelmedi'));
+  if (await main.$('.d-body .nt-cap')) {
+    // yalnız hedefin kendisi (istemci): giden = istekler, gelen = yanıtlar
+    await main.uncheck('.d-body [data-a="children"]');
+    await main.waitForFunction(() => document.querySelectorAll('.d-body .vl-row').length >= 1, null, { timeout: 20000 }).catch(() => {});
+    const conns = await main.evaluate((pid) => window.api.query('netconns', { pid }), target.pid);
+    const lo = conns.ok ? conns.data.conns.find((c) => c.proto === 'tcp' && c.remote === '127.0.0.1' && c.rport > 0) : null;
+    const listed = await main.evaluate(() => ({ rows: document.querySelectorAll('.d-body .vl-row').length, count: document.querySelector('.d-body [data-r="count"]').textContent.trim() }));
+    check(lo && listed.rows >= 1, `ağ: bağlantılar listelendi (${listed.count}) — ${lo ? `127.0.0.1:${lo.lport} → 127.0.0.1:${lo.rport} (${lo.state})` : (conns.ok ? 'geri döngü bağlantısı yok' : conns.code)}`);
+    if (lo) {
+      // Port süzgeci: sunucunun portu eşleşir, ilgisiz port eşleşmez, geçersiz yazım işaretlenir
+      const rowsWith = async (text) => { await main.fill('.d-body [data-a="ports"]', text); await main.waitForTimeout(500); return main.evaluate(() => ({ n: document.querySelectorAll('.d-body .vl-row').length, invalid: document.querySelector('.d-body [data-a="ports"]').classList.contains('invalid') })); };
+      const hit = await rowsWith(String(lo.rport));
+      const miss = await rowsWith('1');
+      const wrong = await rowsWith('abc');
+      check(hit.n >= 1 && miss.n === 0 && wrong.invalid && !hit.invalid, `ağ: port süzgeci (${lo.rport} → ${hit.n} satır, 1 → ${miss.n} satır, "abc" → ${wrong.invalid ? 'geçersiz' : 'kabul edildi'})`);
+      await rowsWith('');
+    }
+    const cap = await main.evaluate(() => window.api.query('netcap', {}));
+    const capText = (await main.textContent('.d-body .nt-cap')).trim().replace(/\s+/g, ' ').slice(0, 140);
+    if (!WIN) {
+      check(cap.ok && cap.data.capture === false && cap.data.reason === 'unsupported' && await main.evaluate(() => document.querySelector('.d-body .nt-stream').hidden), `ağ: içerik yakalama bu platformda yok — ${capText}`);
+      await shot('e2e-12-ag');
+    } else {
+      if (!(cap.ok && cap.data.capture)) {
+        if (await main.$('.d-body .nt-cap [data-a="start"]')) await main.click('.d-body .nt-cap [data-a="start"]');
+        await main.waitForSelector('.d-body .nt-cap .nt-dot', { timeout: 15000 }).catch(() => {});
+      }
+      const on = await main.evaluate(() => window.api.query('netcap', {}));
+      check(on.ok && on.data.capture, `ağ: yakalama ${on.ok && on.data.capture ? `açık (${on.data.ifaces.map((i) => `${i.addr}${i.loopback ? ' geri döngü' : ''}`).join(', ')})` : `açılamadı — ${on.ok ? `${on.data.reason} ${on.data.error || ''} yönetici: ${on.data.elevated}` : on.code} — ${capText}`}`);
+      if (on.ok && on.data.capture) {
+        const pane = (dir) => `.d-body .nt-pane[data-dir="${dir}"] .nt-body`;
+        const smart = () => main.evaluate(() => {
+          const one = (dir) => {
+            const b = document.querySelector(`.d-body .nt-pane[data-dir="${dir}"] .nt-body`);
+            const img = b.querySelector('.ns-img img');
+            return { secs: b.querySelectorAll('.ns-sec').length, json: b.querySelectorAll('.j-k').length, img: img ? `${img.naturalWidth}x${img.naturalHeight}` : '', text: b.textContent.replace(/\s+/g, ' ') };
+          };
+          return { out: one('out'), in: one('in'), scope: document.querySelector('.d-body [data-r="scope"]').textContent.trim().replace(/\s+/g, ' '), status: document.querySelector('.d-body [data-r="status"]').textContent.trim() };
+        });
+        // Bir tur dört istektir; her şeyin aynı akışta göründüğü an beklenir (akış birkaç saniyede bir yenilenir)
+        const ready = await main.waitForFunction(() => {
+          const q = (dir, sel) => document.querySelector(`.d-body .nt-pane[data-dir="${dir}"] .nt-body ${sel}`);
+          const drawn = (i) => i && i.complete && i.naturalWidth > 0;
+          return q('out', '.j-k') && drawn(q('out', '.ns-img img')) && q('in', '.j-k') && drawn(q('in', '.ns-img img')) && /sayfa\.html/.test(q('out', '').textContent) && /baslik/.test(q('in', '').textContent);
+        }, null, { timeout: 45000 }).then(() => true).catch(() => false);
+        if (ready) await main.click('.d-body .nt-stream [data-a="pause"]');
+        const v = await smart();
+        check(ready, `ağ: akıllı görünüm — kapsam: ${v.scope} · ${v.status}`);
+        check(v.out.json > 3 && /"kaynak"|kaynak/.test(v.out.text) && /POST/.test(v.out.text), `ağ giden: gönderilen JSON sözdizimi renkli (${v.out.json} anahtar, ${v.out.secs} bölüm)${ready ? '' : ` — ${v.out.text.slice(0, 200)}`}`);
+        check(/^[1-9]\d*x[1-9]\d*$/.test(v.out.img), `ağ giden: yüklenen PNG önizlendi (${v.out.img || 'yok'})`);
+        check(v.in.json > 3 && /durum/.test(v.in.text), `ağ gelen: gzip yanıt çözülüp JSON olarak gösterildi (${v.in.json} anahtar, ${v.in.secs} bölüm)${ready ? '' : ` — ${v.in.text.slice(0, 200)}`}`);
+        check(/^[1-9]\d*x[1-9]\d*$/.test(v.in.img), `ağ gelen: indirilen PNG önizlendi (${v.in.img || 'yok'})`);
+        // Yakalanan HTML yalnız kaynak olarak gösterilir: sayfanın öğeleri oluşmaz, betiği çalışmaz
+        const inert = await main.evaluate(() => ({ ran: typeof window.__mpTargetRan, h1: document.querySelectorAll('.d-body .nt-body h1, .d-body .nt-body script, .d-body .nt-body [onerror]').length }));
+        check(/baslik/.test(v.in.text) && inert.ran === 'undefined' && inert.h1 === 0, `ağ gelen: HTML kaynak olarak gösterildi, çalıştırılmadı (betik: ${inert.ran}, öğe: ${inert.h1})`);
+        await shot('e2e-12-ag');
+        const tot = await main.evaluate((pid) => { const n = APP.byPid.get(pid); return { net: n ? n.p.netRx + n.p.netTx : -1, sys: APP.sys ? [APP.sys.netRx, APP.sys.netTx, APP.sys.netCap] : null }; }, target.pid);
+        ok(`ağ: süreç hızı ${tot.net} B/sn · sistem ${tot.sys ? tot.sys.join(' / ') : '—'}`);
+        // Diğer biçimler: aynı baytlar hex dökümü, düz metin, HTML / XML kaynağı ve Base64 olarak
+        const fmt = async (f, dir, re, label) => {
+          await main.click(`.d-body .nt-stream [data-f="${f}"]`);
+          const hit = await main.waitForFunction(([sel, src]) => new RegExp(src).test(document.querySelector(sel).textContent), [pane(dir), re.source], { timeout: 15000 }).then(() => true).catch(() => false);
+          check(hit, `ağ: ${label}${hit ? '' : ` — ${(await main.textContent(pane(dir))).replace(/\s+/g, ' ').slice(0, 160)}`}`);
+        };
+        await fmt('hex', 'out', /\b[0-9a-f]{8}\b[\s\S]*\b[0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2}\b/i, 'hex dökümü (giden)');
+        await main.waitForTimeout(400);
+        await shot('e2e-13-ag-hex');
+        await fmt('text', 'out', /GET \/sayfa\.html HTTP\/1\.1/, 'düz metin (giden istek satırı okunuyor)');
+        await fmt('html', 'in', /class="baslik"/, 'HTML / XML kaynağı (gelen sayfa)');
+        await fmt('base64', 'out', /[A-Za-z0-9+/]{120}/, 'Base64 (giden)');
+        await main.click('.d-body .nt-stream [data-f="smart"]');
+        // Temizle: iki panel de boşalır, sonraki turda yeniden dolar
+        await main.click('.d-body .nt-stream [data-a="pause"]');
+        await main.click('.d-body .nt-stream [data-a="clear"]');
+        await main.waitForTimeout(300);
+        const cleared = await main.evaluate(() => document.querySelectorAll('.d-body .nt-body .ns-sec').length);
+        const again = await main.waitForFunction(() => document.querySelector('.d-body .nt-pane[data-dir="in"] .nt-body .ns-sec'), null, { timeout: 20000 }).then(() => true).catch(() => false);
+        check(cleared === 0 && again, `ağ: temizle (${cleared} bölüm kaldı), ardından yeni veri ${again ? 'geldi' : 'gelmedi'}`);
+      }
+    }
+    await main.check('.d-body [data-a="children"]');
+  } else bad(`ağ: ${await bodyMsg()}`);
 
   // Eylemler (yalnız hedef süreç üzerinde): askıya al → rozet, sürdür, öncelik
   await tab('general', 800);
@@ -211,6 +312,43 @@ let cleanup = async () => {};
   await main.waitForTimeout(500);
   check(await main.evaluate(() => !document.querySelector('#ptEmpty').classList.contains('hidden')), 'arama: eşleşme yokken boş durum iletisi');
   await main.fill('#search', '');
+  await main.waitForTimeout(500);
+
+  // Ağaç: tümünü kapat / tümünü aç, yük sütununa göre sıralama (dalın toplamı)
+  {
+    const count = () => main.evaluate(() => ({ rows: APP.rows.length, deep: APP.rows.filter((r) => r.depth > 0).length, procs: APP.byPid.size }));
+    const before = await count();
+    await main.click('#ptHead [data-op="collapseAll"]');
+    await main.waitForTimeout(400);
+    const shut = await count();
+    check(before.deep > 0 && shut.deep === 0 && shut.rows < before.rows, `ağaç: tümünü kapat (${before.rows} → ${shut.rows} satır, yalnız kökler)`);
+    await main.click('#ptHead [data-op="expandAll"]');
+    await main.waitForTimeout(400);
+    const open = await count();
+    check(open.deep > 0 && Math.abs(open.rows - open.procs) <= 3, `ağaç: tümünü aç (${open.rows} satır, ${open.procs} süreç)`);
+    const sorted = async (key) => {
+      await main.click(`#ptHead .th[data-key="${key}"]`);
+      await main.waitForTimeout(400);
+      return main.evaluate((k) => {
+        // kökler, alt ağaçlarının toplamına göre azalan sırada olmalı (toplam, o anki satırlardan yeniden hesaplanır)
+        const sums = [];
+        for (const r of APP.rows) { if (r.depth === 0) sums.push(0); sums[sums.length - 1] += r.p[k] || 0; }
+        let okay = true;
+        for (let i = 1; i < sums.length; i++) if (sums[i] > sums[i - 1] + 1e-6) okay = false;
+        return { okay, roots: sums.length, top: APP.rows[0].p.name, sum: sums[0], sort: APP.view.sort };
+      }, key);
+    };
+    const byMem = await sorted('ws');
+    check(byMem.okay && byMem.sort.key === 'ws' && byMem.sort.dir === -1, `ağaç: bellek sütununa göre sıralama — ${byMem.roots} kök, dal toplamına göre azalan; başta ${byMem.top} (${Math.round(byMem.sum / 1048576)} MB)`);
+    await shot('e2e-14-agac');
+    // Ağ sütunu dar tabloda gizlenir
+    if (await main.isVisible('#ptHead .th[data-key="net"]')) {
+      const byNet = await sorted('net');
+      check(byNet.okay && byNet.sort.key === 'net', `ağaç: ağ sütununa göre sıralama — başta ${byNet.top}`);
+    } else ok(`ağaç: ağ sütunu bu genişlikte gizli (${await main.evaluate(() => document.querySelector('#procs').clientWidth)} px)`);
+    await main.click('#ptHead .th[data-key="name"]');
+    await main.waitForTimeout(300);
+  }
   await main.click('#viewMode button:not(.on)');
   await main.waitForTimeout(500);
   check(await main.evaluate(() => APP.view.mode === 'list'), 'görünüm: düz liste');

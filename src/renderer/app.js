@@ -15,9 +15,11 @@ const SHORTCUTS = [
 // Sütunlar: [sıralama anahtarı, etiket, sınıf]
 const COLUMNS = [
   ['name', 'col.name', ''], ['pid', 'col.pid', 'num'], ['cpu', 'col.cpu', 'num'], ['ws', 'col.mem', 'num'],
-  ['io', 'col.io', 'num'], ['gpu', 'col.gpu', 'num'], ['threads', 'col.threads', 'num w-only'], ['handles', 'col.handles', 'num w-only'],
+  ['io', 'col.io', 'num'], ['net', 'col.net', 'num n-only'], ['gpu', 'col.gpu', 'num'],
+  ['threads', 'col.threads', 'num w-only'], ['handles', 'col.handles', 'num w-only'],
 ];
-const METRICS = [['cpu', 'cpu', 44, 10], ['ws', 'ws', 44, 0], ['io', 'io', 44, 65536], ['gpu', 'gpu', 36, 10]]; // [alan, renk, tuval genişliği, ölçek tabanı]
+// Satır içi ölçümler: [alan, renk, tuval genişliği, ölçek tabanı, hücre sınıfı]
+const METRICS = [['cpu', 'cpu', 44, 10, ''], ['ws', 'ws', 44, 0, ''], ['io', 'io', 44, 65536, ''], ['net', 'net', 40, 65536, ' n n-only'], ['gpu', 'gpu', 36, 10, ' g']];
 
 const APP = {
   hist: null, hello: null,
@@ -28,6 +30,7 @@ const APP = {
   collapsed: new Set(), fresh: new Map(), events: [],
 };
 let acct = { loggedIn: false };
+const STATE_COLS = { net: false, netChart: false }; // tablo genişliğine göre görünen ağ sütunu (ResizeObserver ayarlar)
 let barDismissed = false;
 const tailBuf = new Float32Array(60);
 
@@ -47,18 +50,25 @@ APP.hueOf = hueOf;
 APP.gpuOn = () => !!(APP.hello && APP.hello.gpuCounters);
 
 // --- Sistem özeti ---------------------------------------------------------------
-const SYS_TILES = [['cpu', 'sys.cpu', '--m-cpu'], ['mem', 'sys.mem', '--m-mem'], ['io', 'sys.io', '--m-io'], ['gpu', 'sys.gpu', '--m-gpu']];
+const SYS_TILES = [['cpu', 'sys.cpu', '--m-cpu'], ['mem', 'sys.mem', '--m-mem'], ['io', 'sys.io', '--m-io'], ['net', 'sys.net', '--m-net'], ['gpu', 'sys.gpu', '--m-gpu']];
 function buildSys() {
   $('#sys').innerHTML = SYS_TILES.map(([k, label, c]) => `<button class="sys-tile" type="button" data-k="${k}" style="--c:var(${c})">
-    <span><span class="st-l">${esc(t(label))}</span><span class="st-v" data-v></span></span><canvas></canvas></button>`).join('');
+    <span class="st-b"><span class="st-l"><span>${esc(t(label))}</span><span class="st-x" data-x></span></span><span class="st-v" data-v></span></span><canvas></canvas></button>`).join('');
   $('#sys').onclick = (e) => { if (e.target.closest('.sys-tile')) select(null); };
 }
 function sysValue(k) {
   const s = APP.sys;
   if (!s) return '—';
   if (k === 'cpu') return `${FMT.pct(s.cpu)}<small> %</small>`;
-  if (k === 'mem') return `${esc(FMT.bytes(s.memTotal - s.memAvail))}<small> / ${esc(FMT.bytes(s.memTotal))}</small>`;
+  if (k === 'mem') {
+    // Birim ortaksa bir kez yazılır ("4.50 / 15.6 GB"): dar karoya sığar
+    const used = FMT.bytes(s.memTotal - s.memAvail), total = FMT.bytes(s.memTotal);
+    const cut = used.lastIndexOf(' ');
+    const same = cut > 0 && total.endsWith(used.slice(cut));
+    return `${esc(same ? used.slice(0, cut) : used)}<small> / ${esc(total)}</small>`;
+  }
   if (k === 'io') return esc(FMT.rate((s.ioRead || 0) + (s.ioWrite || 0), SEC));
+  if (k === 'net') return `<span title="${esc(t('net.down'))}">↓ ${esc(FMT.rate(s.netRx || 0, SEC))}</span>`;
   return APP.gpuOn() ? `${FMT.pct(s.gpu)}<small> %</small>` : '—';
 }
 function paintSys() {
@@ -67,11 +77,13 @@ function paintSys() {
   for (const tile of $('#sys').children) {
     const k = tile.dataset.k;
     tile.querySelector('[data-v]').innerHTML = sysValue(k);
+    // Ağ: indirme değerde, yükleme başlık satırında
+    if (k === 'net') { const up = tile.querySelector('[data-x]'); up.textContent = APP.sys ? `↑ ${FMT.rate(APP.sys.netTx || 0, SEC)}` : ''; up.title = t('net.up'); }
     const cv = tile.querySelector('canvas');
     if (!ss || !cv.offsetParent) continue;
     const n = Math.min(ss.n, 60);
     const vals = ss[k].subarray(ss[k].length - n);
-    CHARTS.spark(cv, vals, n, { w: 62, h: 28, color: c[k], floorMax: k === 'io' ? 1048576 : 100, slots: 60 });
+    CHARTS.spark(cv, vals, n, { w: 62, h: 28, color: c[k], floorMax: k === 'io' || k === 'net' ? 1048576 : 100, slots: 60 });
   }
   $('#stats').textContent = APP.procs.length ? t('stats.procs', { count: APP.procs.length }) : `v${window.api.version}`;
 }
@@ -93,9 +105,14 @@ function rebuildRows() {
 
 function buildHead() {
   const sort = APP.view.sort || {};
+  const tree = APP.view.mode === 'tree';
   $('#ptHead').innerHTML = COLUMNS.map(([key, label, cls]) => {
     const on = sort.key === key;
-    return `<button type="button" class="th ${cls}${on ? ' on' : ''}" data-key="${key}" title="${esc(t(label + 'Hint'))}">${cls.includes('num') && on ? icon(sort.dir < 0 ? 'chevronDown' : 'chevronUp') : ''}<span>${esc(t(label))}</span>${!cls.includes('num') && on ? icon(sort.dir < 0 ? 'chevronDown' : 'chevronUp') : ''}</button>`;
+    // Ağaç görünümünde yük sütunları dalın toplamına göre sıralar: ipucu bunu söyler
+    const hint = t(label + 'Hint') + (tree && TREE.SUM_KEYS.has(key) ? `\n${t('col.treeSortHint')}` : '');
+    const th = `<button type="button" class="th ${cls}${on ? ' on' : ''}" data-key="${key}" title="${esc(hint)}">${cls.includes('num') && on ? icon(sort.dir < 0 ? 'chevronDown' : 'chevronUp') : ''}<span>${esc(t(label))}</span>${!cls.includes('num') && on ? icon(sort.dir < 0 ? 'chevronDown' : 'chevronUp') : ''}</button>`;
+    if (key !== 'name' || !tree) return th;
+    return `<div class="th-cell">${th}<button type="button" class="th-op" data-op="expandAll" title="${esc(t('act.expandAll'))}">${icon('chevronsDown')}</button><button type="button" class="th-op" data-op="collapseAll" title="${esc(t('act.collapseAll'))}">${icon('chevronsUp')}</button></div>`;
   }).join('');
 }
 function setSort(key) {
@@ -111,6 +128,7 @@ function setMode(mode) {
   APP.view = { ...APP.view, mode };
   window.api.setSettings({ view: { mode } });
   paintMode();
+  buildHead();
   refreshTable();
   ensureVisible();
 }
@@ -121,10 +139,10 @@ function paintMode() {
 // --- Tablo: sanal kaydırma ve satır çizimi ---------------------------------------
 const pool = [];
 function makeRow() {
-  const el = h(`<div class="pr"><div class="pn"></div><div class="c num"></div>${METRICS.map(([k]) => `<div class="c m${k === 'gpu' ? ' g' : ''}"><span class="v"></span><canvas></canvas></div>`).join('')}<div class="c num w-only"></div><div class="c num w-only"></div></div>`);
+  const el = h(`<div class="pr"><div class="pn"></div><div class="c num"></div>${METRICS.map((x) => `<div class="c m${x[4]}"><span class="v"></span><canvas></canvas></div>`).join('')}<div class="c num w-only"></div><div class="c num w-only"></div></div>`);
   const kids = el.children;
-  const m = [2, 3, 4, 5].map((i) => ({ v: kids[i].firstElementChild, cv: kids[i].lastElementChild }));
-  return { el, pn: kids[0], pid: kids[1], m, th: kids[6], hd: kids[7], sig: '', cls: '' };
+  const m = METRICS.map((_, i) => ({ v: kids[2 + i].firstElementChild, cv: kids[2 + i].lastElementChild }));
+  return { el, pn: kids[0], pid: kids[1], m, th: kids[2 + METRICS.length], hd: kids[3 + METRICS.length], sig: '', cls: '' };
 }
 function markName(name) {
   const q = APP.query.trim().toLowerCase();
@@ -154,6 +172,7 @@ function rowTitle(r) {
   const s = TREE.subtreeSum(node, ['cpu', 'ws']);
   return t('tree.subtree', { count: s.count, cpu: FMT.pct(s.cpu), mem: FMT.bytes(s.ws) });
 }
+const ROW_SUM = ['cpu', 'ws', 'io', 'net', 'gpu', 'threads', 'handles'];
 function fillRow(slot, r, c) {
   const p = r.p;
   const sig = `${p.key}|${r.depth}|${r.last}|${r.collapsed}|${r.hasChildren}|${r.guides.join('')}|${APP.query}|${p.name}`;
@@ -167,19 +186,27 @@ function fillRow(slot, r, c) {
   const cls = `pr${p.key === APP.selected ? ' sel' : ''}${APP.matched && !APP.matched.has(p.pid) ? ' dim' : ''}${APP.fresh.has(p.key) ? ' new' : ''}`;
   if (slot.cls !== cls) { slot.cls = cls; slot.el.className = cls; }
   const gpuOn = APP.gpuOn();
-  const text = [FMT.pct(p.cpu), FMT.bytes(p.ws), p.io > 0 ? FMT.rate(p.io) : '0', gpuOn ? FMT.pct(p.gpu) : '—'];
-  const zero = [p.cpu < 0.05, false, !(p.io > 0), !(p.gpu >= 0.05)];
-  const hot = [p.cpu >= 25, false, false, p.gpu >= 50];
-  for (let i = 0; i < 4; i++) {
+  // Daraltılmış dalın satırı, gizlediği alt süreçlerle birlikte toplamı gösterir (sıralama ölçüsüyle aynı sayı);
+  // küçük grafik sürecin kendi geçmişidir.
+  const node = r.collapsed ? APP.byPid.get(p.pid) : null;
+  const d = node ? TREE.subtreeSum(node, ROW_SUM) : p;
+  const sum = node ? ' sum' : '';
+  const text = [FMT.pct(d.cpu), FMT.bytes(d.ws), d.io > 0 ? FMT.rate(d.io) : '0', d.net > 0 ? FMT.rate(d.net) : '0', gpuOn ? FMT.pct(d.gpu) : '—'];
+  const zero = [d.cpu < 0.05, false, !(d.io > 0), !(d.net > 0), !(d.gpu >= 0.05)];
+  const hot = [d.cpu >= 25, false, false, false, d.gpu >= 50];
+  const netShown = STATE_COLS.net;
+  for (let i = 0; i < METRICS.length; i++) {
     const [k, color, w, floor] = METRICS[i];
+    if (k === 'net' && !netShown) continue;
     const cell = slot.m[i];
     cell.v.textContent = text[i];
-    cell.v.className = `v${zero[i] ? ' z' : ''}${hot[i] ? ' hot' : ''}`;
+    cell.v.className = `v${zero[i] ? ' z' : ''}${hot[i] ? ' hot' : ''}${sum}`;
+    if (k === 'net' && !STATE_COLS.netChart) continue;
     const n = k === 'gpu' && !gpuOn ? 0 : APP.hist.tail(p.key, k, tailBuf);
     CHARTS.spark(cell.cv, tailBuf, n, { w, h: 18, color: c[color], floorMax: floor, slots: 60 });
   }
-  slot.th.textContent = p.threads;
-  slot.hd.textContent = p.handles;
+  slot.th.textContent = d.threads;
+  slot.hd.textContent = d.handles;
 }
 let paintQueued = false;
 function queuePaint() {
@@ -263,6 +290,17 @@ function toggleCollapse(key, force) {
   if (want) APP.collapsed.add(key); else APP.collapsed.delete(key);
   refreshTable();
 }
+// Ağacın tümü: alt süreci olan her dal kapanır (yalnız kökler görünür) / hepsi açılır.
+function collapseAll() {
+  for (const n of APP.byPid.values()) if (n.children.length) APP.collapsed.add(n.p.key);
+  refreshTable();
+  ensureVisible();
+}
+function expandAll() {
+  APP.collapsed.clear();
+  refreshTable();
+  ensureVisible();
+}
 function actionFailed(what, r) {
   toast(what, { type: 'err', sub: r.code === 'failed' && r.message ? r.message : errText(r.code) });
 }
@@ -338,8 +376,9 @@ function rowMenu(p, x, y) {
     { label: t('act.copyName'), icon: 'copy', action: () => APP.copy(p.name, t('col.name')) },
     APP.view.mode === 'tree' && kids ? '-' : null,
     APP.view.mode === 'tree' && kids ? { label: t(APP.collapsed.has(p.key) ? 'act.expand' : 'act.collapse'), icon: APP.collapsed.has(p.key) ? 'chevronDown' : 'chevronRight', action: () => toggleCollapse(p.key) } : null,
-    APP.view.mode === 'tree' ? { label: t('act.collapseAll'), icon: 'list', action: () => { for (const q of APP.procs) { const n = APP.byPid.get(q.pid); if (n && n.children.length && n.parent) APP.collapsed.add(q.key); } refreshTable(); } } : null,
-    APP.view.mode === 'tree' && APP.collapsed.size ? { label: t('act.expandAll'), icon: 'list', action: () => { APP.collapsed.clear(); refreshTable(); } } : null,
+    APP.view.mode === 'tree' ? '-' : null,
+    APP.view.mode === 'tree' ? { label: t('act.expandAll'), icon: 'chevronsDown', action: expandAll } : null,
+    APP.view.mode === 'tree' ? { label: t('act.collapseAll'), icon: 'chevronsUp', action: collapseAll } : null,
   ]);
 }
 
@@ -416,7 +455,12 @@ function applySnapshot(s, pushHist) {
 }
 
 // --- Etkileşim: tablo, arama, klavye ---------------------------------------------
-$('#ptHead').onclick = (e) => { const b = e.target.closest('.th'); if (b) setSort(b.dataset.key); };
+$('#ptHead').onclick = (e) => {
+  const op = e.target.closest('.th-op');
+  if (op) { if (op.dataset.op === 'collapseAll') collapseAll(); else expandAll(); return; }
+  const b = e.target.closest('.th');
+  if (b) setSort(b.dataset.key);
+};
 $('#ptBody').addEventListener('scroll', queuePaint, { passive: true });
 $('#ptRows').onclick = (e) => {
   const row = e.target.closest('.pr');
@@ -440,8 +484,15 @@ $('#ptRows').oncontextmenu = (e) => {
   rowMenu(p, e.clientX, e.clientY);
 };
 $('#ptBody').onclick = (e) => { if (e.target === $('#ptBody') || e.target === $('#ptSpacer')) select(null); };
+// Sütun kademeleri (app.css --pt-cols): dar bölmede ağ sütunu yok; n1 = yalnız sayı; n2 = sayı + küçük grafik;
+// wide = iş parçacığı ve tutamaç sütunları da.
 new ResizeObserver(() => {
-  $('#procs').classList.toggle('wide', $('#procs').clientWidth >= 980);
+  const w = $('#procs').clientWidth;
+  STATE_COLS.net = w >= 760;
+  STATE_COLS.netChart = w >= 840;
+  $('#procs').classList.toggle('n1', STATE_COLS.net);
+  $('#procs').classList.toggle('n2', STATE_COLS.netChart);
+  $('#procs').classList.toggle('wide', w >= 980);
   queuePaint();
 }).observe($('#procs'));
 

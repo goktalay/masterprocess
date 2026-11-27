@@ -53,6 +53,29 @@ test('flattenTree: derinlik, kardeş sıralaması ve daraltma', () => {
   assert.equal(c[1].collapsed, true);
 });
 
+test('flattenTree: yük sütununda dal, alt süreçleriyle birlikte toplam yüküne göre sıralanır', () => {
+  const NCOLS = COLS.concat(['netRx', 'netTx']);
+  const r = (pid, ppid, name, cpu, rx = 0, tx = 0) => [pid, ppid, name, cpu, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1000 + pid, 0, rx, tx];
+  const procs = T.rowsToObjects(NCOLS, [
+    r(10, 0, 'launcher', 0.1),        // kendi yükü küçük, dalı büyük
+    r(11, 10, 'worker', 30, 4000, 1000),
+    r(12, 10, 'worker', 20),
+    r(20, 0, 'solo', 25, 100, 50),    // tek başına launcher'dan yüklü, dalından hafif
+    r(30, 0, 'idle', 0),
+  ]);
+  assert.equal(procs[1].net, 5000);
+  const { roots } = T.buildTree(procs);
+  assert.deepEqual(T.flattenTree(roots, { sortKey: 'cpu', sortDir: -1 }).map((x) => x.p.pid), [10, 11, 12, 20, 30]);
+  assert.deepEqual(T.flattenTree(roots, { sortKey: 'cpu', sortDir: 1 }).map((x) => x.p.pid), [30, 20, 10, 12, 11]);
+  assert.deepEqual(T.flattenTree(roots, { sortKey: 'net', sortDir: -1 }).map((x) => x.p.pid), [10, 11, 12, 20, 30]);
+  // Düz listede ölçü sürecin kendi değeridir
+  assert.deepEqual(T.flattenList(procs, { sortKey: 'cpu', sortDir: -1 }).map((x) => x.p.pid), [11, 20, 12, 10, 30]);
+  // Ad ve PID kendi değeriyle sıralanır
+  assert.deepEqual(T.flattenTree(roots, { sortKey: 'pid', sortDir: -1 }).map((x) => x.p.pid), [30, 20, 10, 12, 11]);
+  const totals = T.subtreeTotals(roots, 'cpu');
+  assert.equal(Math.round(totals.get(roots.find((n) => n.p.pid === 10)) * 10) / 10, 50.1);
+});
+
 test('flattenTree: kılavuz çizgileri — son olmayan atanın altında çizgi sürer', () => {
   const { roots } = T.buildTree(sample());
   const flat = T.flattenTree(roots, { sortKey: 'name', sortDir: 1 });

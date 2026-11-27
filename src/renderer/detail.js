@@ -6,7 +6,7 @@
 const DETAIL = (() => {
   const SEC = t('unit.sec');
   const DUR = { d: t('unit.d'), h: t('unit.h'), m: t('unit.m'), s: t('unit.s') };
-  const TABS = [['general', 'info'], ['perf', 'radar'], ['memory', 'db'], ['disk', 'folder'], ['gpu', 'monitor'], ['window', 'desktop'], ['modules', 'list'], ['threads', 'cpu'], ['history', 'history']];
+  const TABS = [['general', 'info'], ['perf', 'radar'], ['memory', 'db'], ['disk', 'folder'], ['gpu', 'monitor'], ['network', 'globe'], ['window', 'desktop'], ['modules', 'list'], ['threads', 'cpu'], ['history', 'history']];
   const SYS_TABS = [['overview', 'radar'], ['history', 'history']];
   let host = null;
   let headEl = null;
@@ -62,17 +62,30 @@ const DETAIL = (() => {
     const canvas = el.querySelector('canvas');
     return {
       el,
-      set(values, n, { color, fmt, max = 0, floorMax = 0 }) {
+      // series verilirse çizilen onlardır (ör. indirme + yükleme); tepe ve ortalama yine values üzerinden hesaplanır
+      set(values, n, { color, fmt, max = 0, floorMax = 0, series = null, labelHtml = '' }) {
         const s = stats(values, n);
-        v.textContent = fmt(s.cur);
+        if (labelHtml) v.innerHTML = labelHtml; else v.textContent = fmt(s.cur);
         x.innerHTML = `${esc(t('d.peak'))} <b>${esc(fmt(s.peak))}</b> · ${esc(t('d.avg'))} <b>${esc(fmt(s.avg))}</b>`;
-        CHARTS.line(canvas, { series: [{ values, n, color }], capacity: APP.hist.capacity, max, floorMax, fmt, stepMs: APP.mon.refreshMs || 1000, secLabel: SEC });
+        const drawn = series ? series.map((q) => ({ values: q.values, n, color: q.color, noFill: !!q.noFill })) : [{ values, n, color }];
+        CHARTS.line(canvas, { series: drawn, capacity: APP.hist.capacity, max, floorMax, fmt, stepMs: APP.mon.refreshMs || 1000, secLabel: SEC });
       },
       blank(text) { v.textContent = text; x.textContent = ''; CHARTS.line(canvas, { series: [], capacity: APP.hist.capacity, max: 1, fmt: () => '', stepMs: APP.mon.refreshMs || 1000, secLabel: SEC }); },
     };
   }
   const fPct = (v) => `${FMT.pct(v)} %`;
   const fRate = (v) => FMT.rate(v, SEC);
+  // Ağ grafiği: dolgulu seri indirme, çizgi yükleme; başlıktaki değer ikisini ayrı gösterir
+  function netChart(card, s, floorMax) {
+    const c = CHARTS.colors();
+    const rx = s.n ? s.netRx[s.n - 1] : 0, tx = s.n ? s.netTx[s.n - 1] : 0;
+    card.set(s.net, s.n, {
+      fmt: fRate, floorMax,
+      series: [{ values: s.netRx, color: c.net }, { values: s.netTx, color: c.netUp, noFill: true }],
+      labelHtml: `<span class="nv-dn" title="${esc(t('net.down'))}">↓</span> ${esc(fRate(rx))} <span class="nv-up" title="${esc(t('net.up'))}">↑</span> ${esc(fRate(tx))}`,
+    });
+  }
+  const volCache = new Map(); // birim → { t, vol }: doluluk haritası kısa süre saklanır
 
   // Sanal liste: yalnız görünen satırlar üretilir. cols: grid şablonu; head: [[etiket, sınıf]]
   function vlist(parent, { cols, head, grow = true, height = 0, empty = '' }) {
@@ -333,15 +346,18 @@ const DETAIL = (() => {
     const cpu = chartCard(el, t('sys.cpu'), '--m-cpu');
     const mem = chartCard(el, t('col.mem'), '--m-mem');
     const io = chartCard(el, t('col.io'), '--m-io');
+    const net = chartCard(el, t('col.net'), '--m-net');
     const gpu = gpuOn ? chartCard(el, t('sys.gpu'), '--m-gpu') : null;
     el.appendChild(h(`<div class="note">${esc(t('perf.note'))}${gpuOn ? '' : ' ' + esc(t('gpu.noCounters'))}</div>`));
     function paint() {
       const c = CHARTS.colors();
       const s = APP.hist.series(cur.key);
-      if (!s) { for (const k of [cpu, mem, io, gpu]) if (k) k.blank('—'); return; }
+      if (!s) { for (const k of [cpu, mem, io, net, gpu]) if (k) k.blank('—'); return; }
       cpu.set(s.cpu, s.n, { color: c.cpu, fmt: fPct, max: 100 });
       mem.set(s.ws, s.n, { color: c.ws, fmt: FMT.bytes, floorMax: 1048576 });
       io.set(s.io, s.n, { color: c.io, fmt: fRate, floorMax: 65536 });
+      // Süreç başına ağ hızı yalnız yakalama açıkken ölçülür
+      if (APP.sys && APP.sys.netCap) netChart(net, s, 65536); else net.blank(t('net.capOff'));
       if (gpu) gpu.set(s.gpu, s.n, { color: c.gpu, fmt: fPct, max: 100 });
     }
     requestAnimationFrame(paint);
@@ -444,7 +460,7 @@ const DETAIL = (() => {
 
   // Disk: G/Ç hızı, açık tutamaç türleri, açık dosyalar; seçilen dosyanın birimdeki yerleşimi ve içeriği
   PROC.disk = (el) => {
-    let list = null, files = [], shown = [], filter = '', sel = -1, viewer = null, dead = false, seq = 0;
+    let list = null, fragList = null, files = [], shown = [], filter = '', sel = -1, viewer = null, dead = false, seq = 0;
     const io = chartCard(el, t('disk.io'), '--m-io', true);
     const statsEl = h(`<div class="stats">${[['rr', 'disk.readRate'], ['wr', 'disk.writeRate'], ['rb', 'g.ioRead'], ['wb', 'g.ioWrite'], ['ro', 'disk.readOps'], ['wo', 'disk.writeOps']].map(([k, key]) => statBox(t(key), k)).join('')}</div>`);
     el.appendChild(statsEl);
@@ -483,6 +499,9 @@ const DETAIL = (() => {
       sel = i;
       list.select(shown.indexOf(f));
       if (viewer) { viewer.destroy(); viewer = null; }
+      if (fragList) { fragList.destroy(); fragList = null; }
+      ctlMap = null;
+      hideTip();
       const my = ++seq;
       const box = area.querySelector('[data-r="file"]');
       box.innerHTML = '';
@@ -514,7 +533,11 @@ const DETAIL = (() => {
             : `<canvas class="cm-canvas" style="margin-top:10px"></canvas><div class="cm-labels"><span>${esc(t('disk.volStart'))}</span><span>${esc(t('disk.volEnd', { size: FMT.bytes((fm.totalClusters || 0) * (fm.clusterSize || 0)) }))}</span></div>
                <div class="note" style="margin-top:4px">${esc(t('disk.mapHint'))}${fm.truncated ? ' ' + esc(t('d.truncated')) : ''}</div>`);
         const canvas = mapEl.querySelector('canvas');
-        if (canvas) { ctlMap = () => CHARTS.clusterMap(canvas, fm); requestAnimationFrame(ctlMap); }
+        if (canvas) {
+          const surf = surface(mapEl, fm, f, my);
+          ctlMap = () => { CHARTS.clusterMap(canvas, fm); surf.paint(); };
+          requestAnimationFrame(() => { if (!dead && my === seq) ctlMap(); });
+        }
       } catch (e) {
         if (dead || my !== seq) return;
         ctlMap = null;
@@ -529,10 +552,99 @@ const DETAIL = (() => {
       } else if (size === 0) hexEl.innerHTML = `<div class="note">${esc(t('disk.emptyFile'))}</div>`;
     }
     let ctlMap = null;
+    // Disk yüzeyi: birim, eşit küme aralıklarına bölünmüş karelerle gösterilir. Doluluk birimin bit eşleminden
+    // (volmap) okunur; vurgulu kareler bu dosyanın parçalarıdır. Altında parçalar dosya sırasıyla listelenir.
+    function surface(host, fm, f, my) {
+      const ext = fm.extents || [];
+      const total = fm.totalClusters || 0, cs = fm.clusterSize || 0;
+      let vol = null, volErr = null, hit = null, picked = -1;
+      const box = h(`<div class="dm"><div class="dm-top"><b>${esc(t('disk.surface'))}</b><span class="dm-key"><i class="k-file"></i>${esc(t('disk.keyFile'))}<i class="k-used"></i>${esc(t('disk.keyUsed'))}<i class="k-free"></i>${esc(t('disk.keyFree'))}</span></div>
+        <canvas class="dm-canvas"></canvas><div class="note" data-r="scale" style="margin-top:4px"></div><div class="chips" data-r="geo" style="margin-top:8px"></div>
+        <div class="dm-top" style="margin-top:12px"><b>${esc(t('disk.fragList', { count: FMT.int(ext.length, LANG) }))}</b></div></div>`);
+      host.appendChild(box);
+      const canvas = box.querySelector('canvas');
+      const sectorSize = () => fm.sectorSize || (vol && vol.sectorSize) || 0;
+      fragList = vlist(box, {
+        cols: '40px minmax(0,1fr) 76px 84px 76px 56px', grow: false, height: Math.min(200, 30 + 24 * ext.length),
+        head: [['#', 'num'], [t('disk.fragStart'), 'num'], [t('disk.fragClusters'), 'num'], [t('disk.fragSectors'), 'num'], [t('g.size'), 'num'], [t('disk.fragPos'), 'num']],
+      });
+      const mine = fragList;
+      function paintList() {
+        const spc = sectorSize() ? cs / sectorSize() : 0;
+        mine.set({
+          count: ext.length, sel: picked,
+          render: (k) => {
+            const [lcn, count] = ext[k];
+            return `<span class="num dim">${k + 1}</span><span class="num mono">${FMT.int(lcn, LANG)}</span><span class="num">${FMT.int(count, LANG)}</span><span class="num">${spc ? FMT.int(count * spc, LANG) : '—'}</span><span class="num">${esc(FMT.bytes(count * cs))}</span><span class="num dim">${total ? `${FMT.pct((lcn / total) * 100)} %` : '—'}</span>`;
+          },
+          onClick: (k) => { picked = picked === k ? -1 : k; mine.select(picked); paint(); },
+        });
+      }
+      function paint() {
+        if (!canvas.isConnected) return;
+        hit = CHARTS.diskMap(canvas, fm, { vol, selected: picked, cell: 8 });
+        let note = t('disk.surfaceScale', { size: FMT.bytes(hit.perCell * cs), clusters: FMT.int(Math.max(1, Math.round(hit.perCell)), LANG) });
+        if (vol && vol.totalClusters) note += ` ${t('disk.surfaceUsed', { pct: FMT.pct((vol.usedClusters / vol.totalClusters) * 100) })}`;
+        else if (volErr) note += ` ${t('disk.surfaceNoVol')}${volErr.code === 'unsupported' ? '' : ` (${errOf(volErr)})`}`;
+        if (fm.truncated) note += ` ${t('d.truncated')}`;
+        const n = box.querySelector('[data-r="scale"]');
+        if (n.textContent !== note) n.textContent = note;
+        const ss = sectorSize();
+        const geo = [[t('disk.volClusters'), FMT.int(total, LANG)], [t('disk.cluster'), FMT.bytes(cs)]];
+        if (ss) geo.push([t('disk.sector'), FMT.bytes(ss)], [t('disk.clusterSectors'), FMT.int(cs / ss, LANG)]);
+        const html = geo.map(([k, v]) => `<span class="chip">${esc(k)} <b>${esc(v)}</b></span>`).join('');
+        const g = box.querySelector('[data-r="geo"]');
+        if (g.dataset.sig !== html) { g.dataset.sig = html; g.innerHTML = html; }
+      }
+      const cellAt = (e) => {
+        if (!hit) return null;
+        const r = canvas.getBoundingClientRect();
+        return hit.at(e.clientX - r.left, e.clientY - r.top);
+      };
+      canvas.onmousemove = (e) => {
+        const c = cellAt(e);
+        if (!c) { hideTip(); return; }
+        const lines = [`<div class="mono">${esc(t('disk.tipClusters', { a: FMT.int(c.lcn0, LANG), b: FMT.int(c.lcn1, LANG) }))}</div>`, `<div class="t3">${esc(t('disk.tipOffset', { size: FMT.bytes(c.lcn0 * cs) }))}</div>`];
+        if (c.used !== null) lines.push(`<div>${esc(t('disk.tipUsed', { pct: FMT.pct(c.used * 100) }))}</div>`);
+        if (c.fragCount) lines.push(`<div><b>${esc(t('disk.tipFile', { list: c.frags.map((i) => i + 1).join(', ') + (c.fragCount > c.frags.length ? ' …' : '') }))}</b></div>`);
+        showTip(lines.join(''), e.clientX, e.clientY);
+      };
+      canvas.onmouseleave = hideTip;
+      canvas.onclick = (e) => {
+        const c = cellAt(e);
+        if (!c || !c.frags.length) return;
+        picked = c.frags[0];
+        mine.select(picked, true);
+        paint();
+      };
+      paintList();
+      (async () => {
+        const key = fm.volume || f.path;
+        let got = volCache.get(key);
+        if (!got || Date.now() - got.t > 30000) {
+          try {
+            const v = await query('volmap', { path: f.path, cells: 4096 });
+            got = { t: Date.now(), vol: { totalClusters: v.totalClusters, usedClusters: v.usedClusters, sectorSize: v.sectorSize || 0, bytes: FMT.b64ToBytes(v.b64) } };
+            volCache.set(key, got);
+          } catch (e) {
+            if (dead || my !== seq) return;
+            volErr = e;
+            paint();
+            return;
+          }
+        }
+        if (dead || my !== seq) return;
+        vol = got.vol;
+        paint();
+        paintList();
+      })();
+      return { paint };
+    }
     async function load() {
       const c = cur;
       if (viewer) { viewer.destroy(); viewer = null; }
       if (list) { list.destroy(); list = null; }
+      if (fragList) { fragList.destroy(); fragList = null; }
       ctlMap = null;
       loading(area);
       let hd;
@@ -557,7 +669,7 @@ const DETAIL = (() => {
     return {
       tick: paintLive, onInfo: paintLive,
       repaint() { paintLive(); if (ctlMap) ctlMap(); },
-      destroy() { dead = true; if (viewer) viewer.destroy(); if (list) list.destroy(); },
+      destroy() { dead = true; hideTip(); if (viewer) viewer.destroy(); if (list) list.destroy(); if (fragList) fragList.destroy(); },
     };
   };
 
@@ -603,6 +715,9 @@ const DETAIL = (() => {
     load();
     return { tick(n) { paintLive(); if (n % 2 === 0) load(); }, repaint: paintLive, destroy() { dead = true; list.destroy(); } };
   };
+
+  // Ağ: bağlantılar, portlar ve akan veri (network.js)
+  PROC.network = (el) => NETVIEW.create(el, { cur: () => cur, live, query, errOf, chartCard, vlist, statBox, setV, fRate, netChart, hideTip });
 
   // Pencere: sürecin üst düzey pencereleri ve seçilenin görüntüsü
   PROC.window = (el) => {
@@ -837,6 +952,7 @@ const DETAIL = (() => {
     const cpu = chartCard(grid, t('sys.cpu'), '--m-cpu', true);
     const mem = chartCard(grid, t('sys.mem'), '--m-mem', true);
     const io = chartCard(grid, t('sys.io'), '--m-io', true);
+    const net = chartCard(grid, t('sys.net'), '--m-net', true);
     const gpu = gpuOn ? chartCard(grid, t('sys.gpu'), '--m-gpu', true) : null;
     const tops = h(`<div class="charts2">${[['cpu', 'sys.topCpu', 'CPU'], ['ws', 'sys.topMem', t('col.mem')]].map(([k, key, col]) => `<div class="vl" style="--vl-cols:minmax(0,1fr) 70px 78px" data-top="${k}">
       <div class="vl-head"><span>${esc(t(key))}</span><span class="num">PID</span><span class="num">${esc(col)}</span></div><div data-r="rows"></div></div>`).join('')}</div>`);
@@ -851,8 +967,9 @@ const DETAIL = (() => {
         cpu.set(s.cpu, s.n, { color: c.cpu, fmt: fPct, max: 100 });
         mem.set(s.mem, s.n, { color: c.mem, fmt: fPct, max: 100 });
         io.set(s.io, s.n, { color: c.io, fmt: fRate, floorMax: 1048576 });
+        netChart(net, s, 1048576);
         if (gpu) gpu.set(s.gpu, s.n, { color: c.gpu, fmt: fPct, max: 100 });
-      } else for (const k of [cpu, mem, io, gpu]) if (k) k.blank('—');
+      } else for (const k of [cpu, mem, io, net, gpu]) if (k) k.blank('—');
       for (const box of tops.querySelectorAll('[data-top]')) {
         const k = box.dataset.top;
         const best = APP.procs.filter((p) => p.pid !== 0).sort((a, b) => b[k] - a[k]).slice(0, 6);
@@ -870,6 +987,7 @@ const DETAIL = (() => {
         rows.push(kvRow(t('sys.memUsed'), `${esc(FMT.bytes(y.memTotal - y.memAvail))} / ${esc(FMT.bytes(y.memTotal))}`));
         if (y.commitLimit) rows.push(kvRow(t('sys.commit'), `${esc(FMT.bytes(y.commitTotal))} / ${esc(FMT.bytes(y.commitLimit))}`));
         rows.push(kvRow(t('sys.io'), `${esc(t('disk.readRate'))} ${esc(fRate(y.ioRead))} · ${esc(t('disk.writeRate'))} ${esc(fRate(y.ioWrite))}`));
+        rows.push(kvRow(t('sys.net'), `${esc(t('net.down'))} ${esc(fRate(y.netRx || 0))} · ${esc(t('net.up'))} ${esc(fRate(y.netTx || 0))}`));
       }
       if (hl) {
         for (const g of hl.gpus || []) rows.push(kvRow(t('sys.gpu'), `${esc(g.name)} · ${esc(FMT.bytes(g.dedicated))}${g.software ? ` <span class="badge">${esc(t('gpu.software'))}</span>` : ''}`));

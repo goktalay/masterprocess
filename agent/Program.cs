@@ -29,8 +29,11 @@ internal static unsafe class Program
                 case "--selftest":
                     Startup();
                     return SelfTest.Run();
+                case "--netdiag":
+                    Startup();
+                    return Net.Diag();
                 default:
-                    Console.Error.WriteLine("usage: mp-agent [--version | --selftest]   (no arguments: NDJSON protocol server on stdin/stdout)");
+                    Console.Error.WriteLine("usage: mp-agent [--version | --selftest | --netdiag]   (no arguments: NDJSON protocol server on stdin/stdout)");
                     return 2;
             }
         }
@@ -160,9 +163,14 @@ internal static unsafe class Program
             case "readmem": Memory.HandleReadMem(req, w); break;
             case "handles": Handles.Handle(req, w); break;
             case "filemap": FileMap.Handle(req, w); break;
+            case "volmap": FileMap.HandleVolMap(req, w); break;
             case "readfile": FileMap.HandleReadFile(req, w); break;
             case "capture": Capture.Handle(req, w); break;
             case "gpudetail": Gpu.HandleDetail(req, w); break;
+            case "netcap": Net.HandleCap(req, w); break;
+            case "netconns": Net.HandleConns(req, w); break;
+            case "netwatch": Net.HandleWatch(req, w); break;
+            case "netstream": Net.HandleStream(req, w); break;
             case "kill": Control.Kill(req, w); break;
             case "suspend": Control.Suspend(req, w); break;
             case "resume": Control.Resume(req, w); break;
@@ -196,6 +204,7 @@ internal static unsafe class Program
         w.WriteNumber("pageSize", si.dwPageSize);
         w.WriteNumber("totalPhys", ms.ullTotalPhys);
         w.WriteBoolean("gpuCounters", Gpu.CountersAvailable);
+        w.WriteBoolean("net", true);
         Gpu.WriteAdapters(w);
         w.WriteEndObject();
     }

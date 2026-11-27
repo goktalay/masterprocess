@@ -99,6 +99,9 @@ test('main.js sahte electron ile yüklenir, IPC kanallarını kaydeder ve giriş
     { cmd: 'readmem', pid: 4, addr: '0x10', len: 16 }, { cmd: 'readmem', pid: 4, addr: '10', len: 70000 },
     { cmd: 'readfile', path: '/etc/passwd', offset: 0, len: 16 }, { cmd: 'filemap', path: 'C:\\Windows\\win.ini' },
     { cmd: 'capture', hwnd: 'a0b1', maxW: 800 },
+    { cmd: 'volmap', path: 'C:\\Windows\\win.ini' }, { cmd: 'netcap', on: 'yes' }, { cmd: 'netconns' }, { cmd: 'netconns', pids: [] },
+    { cmd: 'netconns', pids: [4, 'x'] }, { cmd: 'netconns', pid: 0 }, { cmd: 'netwatch' }, { cmd: 'netwatch', pids: new Array(257).fill(4) },
+    { cmd: 'netstream', since: -1 }, { cmd: 'netstream', since: 0, max: 16 }, { cmd: 'netstream', since: 1.5 },
   ]) {
     const r = await q({}, req);
     assert.deepEqual([r.ok, r.code], [false, 'bad_request'], JSON.stringify(req));
@@ -107,6 +110,15 @@ test('main.js sahte electron ile yüklenir, IPC kanallarını kaydeder ve giriş
   for (const req of [null, { cmd: 'kill' }, { cmd: 'kill', pid: 'x' }, { cmd: 'priority', pid: 4, value: 'turbo' }, { cmd: 'format', pid: 4 }]) {
     const r = await a({}, req);
     assert.deepEqual([r.ok, r.code], [false, 'bad_request'], JSON.stringify(req));
+  }
+  // İzleyici çalışmıyorken ağ sorguları sağlayıcıya ulaşmaz; güvenlik duvarı kuralına dokunulmaz
+  for (const req of [{ cmd: 'netcap', on: true }, { cmd: 'netconns', pid: 4 }, { cmd: 'netwatch', pids: [] }, { cmd: 'netstream', since: 0 }]) {
+    const r = await q({}, req);
+    assert.deepEqual([r.ok, r.code], [false, 'failed'], JSON.stringify(req));
+  }
+  for (const op of ['status', 'allow', 'remove', 'hack']) {
+    const r = await handles.get('net:firewall')({}, op);
+    assert.deepEqual([r.ok, r.code], [false, 'unsupported'], op);
   }
   const rv = await handles.get('proc:reveal')({}, '/etc/passwd');
   assert.deepEqual([rv.ok, rv.code], [false, 'bad_request']);

@@ -45,6 +45,29 @@ test('seriler: en eskiden en yeniye, kapasiteyi aşınca en eski düşer', () =>
   assert.equal(h.series('yok'), null);
 });
 
+test('ağ serileri: süreç ve sistem için gelen / giden ayrı tutulur', () => {
+  const h = createHistory({ capacity: 4 });
+  for (let i = 1; i <= 3; i++) {
+    h.push({ t: i, sys: { cpu: 1, memTotal: 100, memAvail: 50, netRx: i * 100, netTx: i * 10 },
+      procs: [{ key: '1:5', pid: 1, name: 'a', start: 5, cpu: 1, net: i * 11, netRx: i * 10, netTx: i }] });
+  }
+  const s = h.series('1:5');
+  assert.deepEqual(Array.from(s.net), [11, 22, 33]);
+  assert.deepEqual(Array.from(s.netRx), [10, 20, 30]);
+  assert.deepEqual(Array.from(s.netTx), [1, 2, 3]);
+  const sys = h.sysSeries();
+  assert.deepEqual(Array.from(sys.net), [110, 220, 330]);
+  assert.deepEqual(Array.from(sys.netRx), [100, 200, 300]);
+  // Ağ serisi olmayan eski döküm: seriler sıfırla, aynı uzunlukta yüklenir
+  const d = structuredClone(h.dump());
+  delete d.procs['1:5'].net; delete d.sys.netRx;
+  const b = createHistory({ capacity: 4 });
+  b.load(d);
+  assert.deepEqual(Array.from(b.series('1:5').net), [0, 0, 0]);
+  assert.deepEqual(Array.from(b.sysSeries().netRx), [0, 0, 0]);
+  assert.deepEqual(Array.from(b.series('1:5').netRx), [10, 20, 30]);
+});
+
 test('tail: son değerleri verilen tampona yazar', () => {
   const h = createHistory({ capacity: 5 });
   for (let i = 1; i <= 7; i++) h.push(snap(i, [P(1, 'a', i)]));
