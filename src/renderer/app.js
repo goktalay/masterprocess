@@ -50,7 +50,8 @@ APP.hueOf = hueOf;
 APP.gpuOn = () => !!(APP.hello && APP.hello.gpuCounters);
 
 // --- Sistem özeti ---------------------------------------------------------------
-const SYS_TILES = [['cpu', 'sys.cpu', '--m-cpu'], ['mem', 'sys.mem', '--m-mem'], ['io', 'sys.io', '--m-io'], ['net', 'sys.net', '--m-net'], ['gpu', 'sys.gpu', '--m-gpu']];
+// Ağ karosu kısa sütun adını kullanır: başlık satırına yükleme hızı da sığmalı
+const SYS_TILES = [['cpu', 'sys.cpu', '--m-cpu'], ['mem', 'sys.mem', '--m-mem'], ['io', 'sys.io', '--m-io'], ['net', 'col.net', '--m-net'], ['gpu', 'sys.gpu', '--m-gpu']];
 function buildSys() {
   $('#sys').innerHTML = SYS_TILES.map(([k, label, c]) => `<button class="sys-tile" type="button" data-k="${k}" style="--c:var(${c})">
     <span class="st-b"><span class="st-l"><span>${esc(t(label))}</span><span class="st-x" data-x></span></span><span class="st-v" data-v></span></span><canvas></canvas></button>`).join('');

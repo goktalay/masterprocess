@@ -52,7 +52,9 @@ body {
 .sys-tile .st-b { flex: 1 1 0; min-width: 0; display: block; }
 .sys-tile .st-l { font-size: 10.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; display: flex; align-items: center; gap: 5px; overflow: hidden; }
 .sys-tile .st-l::before { content: ''; width: 7px; height: 7px; border-radius: 2px; background: var(--c); flex: 0 0 auto; }
-.sys-tile .st-x { margin-inline-start: auto; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+/* Başlık satırı darsa ad kısalır; sağdaki değer (ağ: yükleme hızı) hiç kesilmez */
+.sys-tile .st-l > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sys-tile .st-x { flex: none; margin-inline-start: auto; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .sys-tile .st-v { display: block; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .sys-tile .st-v small { font-weight: 400; color: var(--text-3); font-size: 11px; }
 .sys-tile canvas { flex: none; width: 62px; height: 28px; display: block; }
