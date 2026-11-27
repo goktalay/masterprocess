@@ -25,6 +25,7 @@ internal static unsafe partial class Net
         public string Addr = "", Mode = "", Name = "";
         public string? Head; // ilk paketin ilk 8 baytı (IP başlığının başı): tanılama için
         public long Packets;
+        public bool Loopback;
         public volatile bool Stop;
         public volatile bool Dead;
         public Thread? T;
@@ -404,17 +405,28 @@ internal static unsafe partial class Net
         Transport(6, *(ulong*)(p + 8), *(ulong*)(p + 16), *(ulong*)(p + 24), *(ulong*)(p + 32), nh, p + off, total - off, total);
     }
 
+    private static bool IsLocal(byte v, ulong a0, ulong a1) => v == 4
+        ? (a0 & 0xFF) == 127 || _local4.Contains((uint)a0)
+        : (a0 == 0 && a1 == 0x0100000000000000UL) || _local6.Contains((a0, a1));
+
     private static void Transport(byte v, ulong s0, ulong s1, ulong d0, ulong d1, byte proto, byte* th, int rem, int total)
     {
-        bool sLocal = v == 4 ? _local4.Contains((uint)s0) : _local6.Contains((s0, s1));
-        bool dLocal = v == 4 ? _local4.Contains((uint)d0) : _local6.Contains((d0, d1));
-        bool inbound;
-        if (sLocal && dLocal) return;
-        if (sLocal) inbound = false;
-        else if (dLocal) inbound = true;
-        else if (proto == 17 && (v == 4 ? ((d0 & 0xF0) == 0xE0 || (uint)d0 == 0xFFFFFFFF) : (d0 & 0xFF) == 0xFF)) inbound = true; // çok noktaya / yayın
-        else return;
+        bool sLocal = IsLocal(v, s0, s1);
+        bool dLocal = IsLocal(v, d0, d1);
+        if (sLocal && dLocal)
+        {
+            // iki ucu da bu bilgisayarda (geri döngü): gönderen süreç için giden, alan süreç için gelen
+            Account(v, s0, s1, d0, d1, proto, th, rem, total, false);
+            Account(v, s0, s1, d0, d1, proto, th, rem, total, true);
+        }
+        else if (sLocal) Account(v, s0, s1, d0, d1, proto, th, rem, total, false);
+        else if (dLocal) Account(v, s0, s1, d0, d1, proto, th, rem, total, true);
+        else if (proto == 17 && (v == 4 ? ((d0 & 0xF0) == 0xE0 || (uint)d0 == 0xFFFFFFFF) : (d0 & 0xFF) == 0xFF))
+            Account(v, s0, s1, d0, d1, proto, th, rem, total, true); // çok noktaya / yayın
+    }
 
+    private static void Account(byte v, ulong s0, ulong s1, ulong d0, ulong d1, byte proto, byte* th, int rem, int total, bool inbound)
+    {
         ushort sport, dport;
         uint seq = 0;
         int flags = 0;

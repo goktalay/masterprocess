@@ -104,6 +104,32 @@ internal static unsafe partial class Net
             live.T = new Thread(() => ThreadMain(live)) { IsBackground = true, Name = "net-" + a.IfIndex };
             live.T.Start();
         }
+        // geri döngü (127.0.0.1, ::1): aynı bilgisayardaki süreçler arası trafik. Açılamazsa yalnız not düşülür.
+        uint loIndex = 1;
+        foreach (var r in NetTables.Interfaces()) if (r.Type == 24) { loIndex = r.Index; break; }
+        if (Environment.GetEnvironmentVariable("MP_NET_LOOPBACK") != "off")
+        {
+            foreach (var a in new[]
+            {
+                new LocalAddr { V = 4, A0 = 0x0100007FUL, IfIndex = loIndex },
+                new LocalAddr { V = 6, A0 = 0, A1 = 0x0100000000000000UL, IfIndex = loIndex },
+            })
+            {
+                var sk = Open(a, out int err, out string step);
+                if (sk == null)
+                {
+                    if (err == Native.WSAEACCES) denied = true;
+                    if (_errors.Count < 16) _errors.Add($"v{a.V} loopback {step} err={err}");
+                    continue;
+                }
+                Sock live = sk;
+                live.Name = names.TryGetValue(a.IfIndex, out var nm) ? nm : "loopback";
+                live.Loopback = true;
+                _socks.Add(live);
+                live.T = new Thread(() => ThreadMain(live)) { IsBackground = true, Name = "net-lo" };
+                live.T.Start();
+            }
+        }
         if (_socks.Count > 0) { _capture = true; _reason = "ok"; }
         else _reason = denied ? "elevation" : candidates == 0 ? "nonet" : "failed";
     }
@@ -208,6 +234,7 @@ internal static unsafe partial class Net
                 w.WriteNumber("v", sk.V);
                 w.WriteString("mode", sk.Mode);
                 w.WriteNumber("packets", sk.Packets);
+                if (sk.Loopback) w.WriteBoolean("loopback", true);
                 if (sk.Head != null) w.WriteString("head", sk.Head);
                 w.WriteEndObject();
             }

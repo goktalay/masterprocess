@@ -22,3 +22,43 @@ jobs:
         if: always()
         continue-on-error: true
         run: agent-out\mp-agent.exe --netdiag
+      - name: Ağ sınaması A1 (varsayılan)
+        id: a1
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label A1-default
+      - name: Ağ sınaması A2 (RCVALL_ON)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          MP_NET_RCVALL: 'on'
+        run: ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label A2-rcvall-on
+      - name: Ağ sınaması A3 (geri döngü soketi kapalı)
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          MP_NET_LOOPBACK: 'off'
+        run: ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label A3-no-loopback-socket
+      # Yalnız A1 başarısızsa: gelen paketleri güvenlik duvarının süzüp süzmediğini ayırt etmek için. Runner tek kullanımlıktır;
+      # kural ve durum yine de geri alınır.
+      - name: Ağ sınaması B (güvenlik duvarı izin kuralı)
+        if: always() && steps.a1.outcome == 'failure'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path agent-out\mp-agent.exe).Path
+          netsh advfirewall firewall add rule name="mp-agent-probe" dir=in action=allow program="$exe" enable=yes
+          try { ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label B-firewall-rule; $code = $LASTEXITCODE }
+          finally { netsh advfirewall firewall delete rule name="mp-agent-probe" }
+          exit $code
+      - name: Ağ sınaması C (güvenlik duvarı kapalı)
+        if: always() && steps.a1.outcome == 'failure'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          netsh advfirewall set allprofiles state off
+          try { ./scripts/agent-net-test.ps1 -Agent agent-out\mp-agent.exe -Label C-firewall-off; $code = $LASTEXITCODE }
+          finally { netsh advfirewall set allprofiles state on }
+          exit $code
